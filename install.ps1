@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
   [string]$RepoUrl = 'https://github.com/lsj-Damon/xcoder.git',
-  [string]$InstallDir = (Join-Path $HOME 'free-code'),
+  [string]$InstallDir = (Join-Path $HOME 'xcoder'),
   [string]$BinDir = (Join-Path $HOME 'bin'),
   [string]$BunMinVersion = '1.3.11',
   [string]$Branch = 'main',
@@ -134,6 +134,146 @@ function Invoke-CommandChecked([string]$FilePath, [string[]]$Arguments, [string]
   }
 }
 
+function Invoke-CommandWithCapturedOutput([string]$FilePath, [string[]]$Arguments) {
+  $capturedOutput = @()
+  & $FilePath @Arguments 2>&1 | Tee-Object -Variable capturedOutput | Out-Host
+
+  return [PSCustomObject]@{
+    ExitCode = $LASTEXITCODE
+    Output = @($capturedOutput)
+    Text = ((@($capturedOutput) | ForEach-Object { $_.ToString() }) -join "`n")
+  }
+}
+
+function Get-GitHubRepoMetadata([string]$Url) {
+  $patterns = @(
+    '^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$',
+    '^git@github\.com:(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?$'
+  )
+
+  foreach ($pattern in $patterns) {
+    $match = [regex]::Match($Url, $pattern)
+    if ($match.Success) {
+      return [PSCustomObject]@{
+        Owner = $match.Groups['owner'].Value
+        Repo = $match.Groups['repo'].Value
+      }
+    }
+  }
+
+  return $null
+}
+
+function Get-GitHubArchiveUrl([string]$Url, [string]$GitBranch) {
+  $RepoMetadata = Get-GitHubRepoMetadata $Url
+  if ($null -eq $RepoMetadata) {
+    return $null
+  }
+
+  return "https://codeload.github.com/$($RepoMetadata.Owner)/$($RepoMetadata.Repo)/zip/refs/heads/$GitBranch"
+}
+
+function Get-InstallSourceMarkerPath([string]$Path) {
+  return (Join-Path $Path '.xcoder-install-source')
+}
+
+function Test-ArchiveInstall([string]$Path) {
+  return Test-Path -LiteralPath (Get-InstallSourceMarkerPath $Path) -PathType Leaf
+}
+
+function Remove-DirectorySafely([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  $ResolvedPath = [System.IO.Path]::GetFullPath($Path)
+  $PathRoot = [System.IO.Path]::GetPathRoot($ResolvedPath)
+
+  if ($ResolvedPath.TrimEnd('\') -eq $PathRoot.TrimEnd('\')) {
+    Fail "Refusing to remove drive root: $ResolvedPath"
+  }
+
+  Remove-Item -LiteralPath $ResolvedPath -Recurse -Force
+}
+
+function Test-ShouldUseArchiveFallback([string]$CommandText) {
+  if ([string]::IsNullOrWhiteSpace($CommandText)) {
+    return $false
+  }
+
+  $patterns = @(
+    'ANOMALY:\s+use of REX\.w is meaningless',
+    'fatal:\s+invalid hash',
+    'fatal:\s+unknown response to connect:.*ANOMALY',
+    'schannel:\s+failed to receive handshake'
+  )
+
+  foreach ($pattern in $patterns) {
+    if ($CommandText -match $pattern) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Download-File([string]$Url, [string]$DestinationPath) {
+  $CurlPath = Get-ExecutablePath @('curl.exe', 'curl')
+  if ($CurlPath) {
+    Invoke-CommandChecked -FilePath $CurlPath -Arguments @('-L', '--fail', '--silent', '--show-error', '--output', $DestinationPath, $Url) -FailureMessage "Failed to download $Url"
+    return
+  }
+
+  Invoke-WebRequest -Uri $Url -OutFile $DestinationPath
+}
+
+function Install-RepoFromArchive([string]$SourceRepoUrl, [string]$GitBranch, [string]$DestinationDir) {
+  $ArchiveUrl = Get-GitHubArchiveUrl $SourceRepoUrl $GitBranch
+  if ($null -eq $ArchiveUrl) {
+    Fail "Archive fallback is only supported for GitHub repositories. Could not derive an archive URL from: $SourceRepoUrl"
+  }
+
+  Write-Warn 'git output appears to be corrupted on this machine. Falling back to the GitHub source ZIP.'
+
+  $ArchivePath = Join-Path $env:TEMP "xcoder-$GitBranch.zip"
+  $ExtractRoot = Join-Path $env:TEMP ("xcoder-archive-" + [guid]::NewGuid().ToString('N'))
+
+  try {
+    Invoke-Step "Downloading source archive from $ArchiveUrl..." {
+      Download-File -Url $ArchiveUrl -DestinationPath $ArchivePath
+    }
+
+    Invoke-Step 'Extracting source archive...' {
+      New-Item -ItemType Directory -Force -Path $ExtractRoot | Out-Null
+      Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractRoot -Force
+    }
+
+    $ExpandedRoot = Get-ChildItem -LiteralPath $ExtractRoot -Force | Select-Object -First 1
+    if ($null -eq $ExpandedRoot) {
+      Fail 'Archive fallback download succeeded, but the extracted archive was empty.'
+    }
+
+    Invoke-Step "Preparing installation directory $DestinationDir..." {
+      Remove-DirectorySafely $DestinationDir
+      New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+
+      Get-ChildItem -LiteralPath $ExpandedRoot.FullName -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $DestinationDir -Recurse -Force
+      }
+
+      $MarkerPath = Get-InstallSourceMarkerPath $DestinationDir
+      Set-Content -LiteralPath $MarkerPath -Encoding UTF8 -Value @(
+        'source=archive'
+        "archive_url=$ArchiveUrl"
+        "branch=$GitBranch"
+      )
+    }
+  } finally {
+    Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Get-GitBashPath([string]$GitPath) {
   if (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_CODE_GIT_BASH_PATH)) {
     if (Test-Path -LiteralPath $env:CLAUDE_CODE_GIT_BASH_PATH -PathType Leaf) {
@@ -248,7 +388,7 @@ function Write-Launcher([string]$BinaryPath) {
   Invoke-Step "Creating launcher in $BinDir..." {
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
-    $LauncherPath = Join-Path $BinDir 'free-code.cmd'
+    $LauncherPath = Join-Path $BinDir 'xcoder.cmd'
     $Launcher = @"
 @echo off
 setlocal
@@ -256,7 +396,7 @@ if exist "$BinaryPath" (
   "$BinaryPath" %*
   exit /b %ERRORLEVEL%
 )
-echo free-code binary not found at "$BinaryPath".
+echo xcoder binary not found at "$BinaryPath".
 echo Re-run the installer or build the project again.
 exit /b 1
 "@
@@ -268,12 +408,11 @@ exit /b 1
 }
 
 Write-Host ''
-Write-Host '   ___                            _' -ForegroundColor Cyan
-Write-Host '  / _|_ __ ___  ___        ___ __| | ___' -ForegroundColor Cyan
-Write-Host ' | |_| ''__/ _ \/ _ \_____ / __/ _` |/ _ \' -ForegroundColor Cyan
-Write-Host ' |  _| | |  __/  __/_____| (_| (_| |  __/' -ForegroundColor Cyan
-Write-Host ' |_| |_|  \___|\___|      \___\__,_|\___|' -ForegroundColor Cyan
-Write-Host '  The free build of Claude Code' -ForegroundColor DarkGray
+Write-Host ' __  _____ ___   ___  ____  _____ ' -ForegroundColor Cyan
+Write-Host ' \ \/ / __/ _ \ / _ \/ __ \/ ___/' -ForegroundColor Cyan
+Write-Host '  >  < (_| (_) |  __/ /_/ / /__  ' -ForegroundColor Cyan
+Write-Host ' /_/\_\___\___/ \___/\____/\___/ ' -ForegroundColor Cyan
+Write-Host '  xcoder - The free build of Claude Code' -ForegroundColor DarkGray
 Write-Host ''
 
 Write-Info 'Starting Windows installation...'
@@ -297,20 +436,29 @@ $BunPath = Ensure-Bun
 
 if (Test-Path -LiteralPath $InstallDir) {
   if (-not (Test-Path -LiteralPath (Join-Path $InstallDir '.git'))) {
-    Fail "$InstallDir already exists, but it is not a git repository."
-  }
-
-  Invoke-Step "Updating repository in $InstallDir..." {
-    & $GitPath -C $InstallDir pull --ff-only origin $Branch
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warn 'git pull failed, continuing with the existing checkout.'
+    if (Test-ArchiveInstall $InstallDir) {
+      Write-Warn "$InstallDir was previously installed from the ZIP fallback. Reinstalling from a fresh archive snapshot..."
+      Install-RepoFromArchive -SourceRepoUrl $RepoUrl -GitBranch $Branch -DestinationDir $InstallDir
+    } else {
+      Fail "$InstallDir already exists, but it is not a git repository."
+    }
+  } else {
+    Invoke-Step "Updating repository in $InstallDir..." {
+      $PullResult = Invoke-CommandWithCapturedOutput -FilePath $GitPath -Arguments @('-C', $InstallDir, 'pull', '--ff-only', 'origin', $Branch)
+      if ($PullResult.ExitCode -ne 0) {
+        Write-Warn 'git pull failed, continuing with the existing checkout.'
+      }
     }
   }
 } else {
   Invoke-Step "Cloning repository into $InstallDir..." {
-    & $GitPath clone --depth 1 --branch $Branch $RepoUrl $InstallDir
-    if ($LASTEXITCODE -ne 0) {
-      Fail 'git clone failed.'
+    $CloneResult = Invoke-CommandWithCapturedOutput -FilePath $GitPath -Arguments @('clone', '--depth', '1', '--branch', $Branch, $RepoUrl, $InstallDir)
+    if ($CloneResult.ExitCode -ne 0) {
+      if (Test-ShouldUseArchiveFallback $CloneResult.Text) {
+        Install-RepoFromArchive -SourceRepoUrl $RepoUrl -GitBranch $Branch -DestinationDir $InstallDir
+      } else {
+        Fail 'git clone failed.'
+      }
     }
   }
 }
@@ -329,7 +477,7 @@ if (-not $DryRun) {
     }
     Write-Ok 'Dependencies installed'
 
-    Write-Info 'Building free-code (all experimental features enabled)...'
+    Write-Info 'Building xcoder (all experimental features enabled)...'
     & $BunPath run build:dev:full
     if ($LASTEXITCODE -ne 0) {
       Fail 'bun run build:dev:full failed.'
@@ -339,7 +487,7 @@ if (-not $DryRun) {
   }
 } else {
   Write-Info '[dry-run] Installing dependencies with bun install --frozen-lockfile'
-  Write-Info '[dry-run] Building free-code with bun run build:dev:full'
+  Write-Info '[dry-run] Building xcoder with bun run build:dev:full'
 }
 
 $BinaryPath = if ($DryRun) {
@@ -349,7 +497,7 @@ $BinaryPath = if ($DryRun) {
 }
 
 if (-not $BinaryPath) {
-  Fail 'Build completed, but no free-code binary was found.'
+  Fail 'Build completed, but no xcoder binary was found.'
 }
 
 if (-not $DryRun) {
@@ -362,8 +510,8 @@ Write-Host ''
 Write-Host '  Installation complete!' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Run it:'
-Write-Host '    free-code                          # interactive REPL' -ForegroundColor Cyan
-Write-Host '    free-code -p "your prompt"         # one-shot mode' -ForegroundColor Cyan
+Write-Host '    xcoder                             # interactive REPL' -ForegroundColor Cyan
+Write-Host '    xcoder -p "your prompt"            # one-shot mode' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Set your API key for this session:'
 Write-Host '    $env:ANTHROPIC_API_KEY="sk-ant-..."' -ForegroundColor Cyan
@@ -372,10 +520,10 @@ Write-Host '  Or persist it for future terminals:'
 Write-Host '    [Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY","sk-ant-...","User")' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Or log in with Claude.ai:'
-Write-Host '    free-code /login' -ForegroundColor Cyan
+Write-Host '    xcoder /login' -ForegroundColor Cyan
 Write-Host ''
 Write-Host "  Source: $InstallDir" -ForegroundColor DarkGray
 Write-Host "  Binary: $BinaryPath" -ForegroundColor DarkGray
-Write-Host "  Link:   $(Join-Path $BinDir 'free-code.cmd')" -ForegroundColor DarkGray
+Write-Host "  Link:   $(Join-Path $BinDir 'xcoder.cmd')" -ForegroundColor DarkGray
 Write-Host ''
 Write-Warn 'Some features still require WSL2 or Unix-like environments, including sandboxing and tmux-backed swarms.'

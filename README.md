@@ -1,21 +1,21 @@
-# free-code
+# xcoder
 
-**The free build of Claude Code.**
+**xcoder, the free build of Claude Code.**
 
 All telemetry stripped. All injected security-prompt guardrails removed. All experimental features unlocked. One binary, zero callbacks home.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paoloanzn/free-code/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.sh | bash
 ```
 
 ```powershell
 powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.ps1 | iex"
 ```
 
-> The installers check your system, install Bun if needed, clone the repo, build with all features enabled, and put `free-code` on your PATH. On native Windows, install `Git for Windows` first because the CLI expects `Git Bash` to be available.
+> The installers check your system, install Bun if needed, clone the repo, build with all features enabled, and put `xcoder` on your PATH. On native Windows, install `Git for Windows` first because the CLI expects `Git Bash` to be available.
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="free-code screenshot" width="800" />
+  <img src="assets/screenshot.png" alt="xcoder screenshot" width="800" />
 </p>
 
 ---
@@ -76,7 +76,7 @@ See [FEATURES.md](FEATURES.md) for the full audit of all 88 flags and their stat
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paoloanzn/free-code/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.sh | bash
 ```
 
 ### Windows PowerShell
@@ -85,17 +85,17 @@ curl -fsSL https://raw.githubusercontent.com/paoloanzn/free-code/main/install.sh
 powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.ps1 | iex"
 ```
 
-This will check your system, install Bun if needed, clone the repo, build the binary with all experimental features enabled, and expose it as `free-code` on your PATH.
+This will check your system, install Bun if needed, clone the repo, build the binary with all experimental features enabled, and expose it as `xcoder` on your PATH. If `git clone` is corrupted by endpoint/security software on Windows, the installer automatically falls back to the GitHub source ZIP.
 
 After install, run:
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-free-code
+xcoder
 ```
 
 ```powershell
 $env:ANTHROPIC_API_KEY="sk-ant-..."
-free-code
+xcoder
 ```
 
 ---
@@ -127,7 +127,7 @@ Some features still require WSL2 or Unix-like environments, including sandboxing
 ```bash
 # Clone the repo
 git clone https://github.com/lsj-Damon/xcoder.git
-cd free-code
+cd xcoder
 
 # Install dependencies
 bun install
@@ -197,7 +197,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 $env:ANTHROPIC_API_KEY="sk-ant-..."
 
 # Or use Claude.ai OAuth
-free-code /login
+xcoder /login
 ```
 
 ### Quick test
