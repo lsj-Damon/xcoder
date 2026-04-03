@@ -8,7 +8,11 @@ All telemetry stripped. All injected security-prompt guardrails removed. All exp
 curl -fsSL https://raw.githubusercontent.com/paoloanzn/free-code/main/install.sh | bash
 ```
 
-> Checks your system, installs Bun if needed, clones, builds with all features enabled, and puts `free-code` on your PATH. Then just `export ANTHROPIC_API_KEY="sk-ant-..."` and run `free-code`.
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.ps1 | iex"
+```
+
+> The installers check your system, install Bun if needed, clone the repo, build with all features enabled, and put `free-code` on your PATH. On native Windows, install `Git for Windows` first because the CLI expects `Git Bash` to be available.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="free-code screenshot" width="800" />
@@ -69,15 +73,28 @@ See [FEATURES.md](FEATURES.md) for the full audit of all 88 flags and their stat
 
 ## Quick install
 
+### macOS / Linux
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/paoloanzn/free-code/main/install.sh | bash
 ```
 
-This will check your system, install Bun if needed, clone the repo, build the binary with all experimental features enabled, and symlink it as `free-code` on your PATH.
+### Windows PowerShell
 
-After install, just run:
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/install.ps1 | iex"
+```
+
+This will check your system, install Bun if needed, clone the repo, build the binary with all experimental features enabled, and expose it as `free-code` on your PATH.
+
+After install, run:
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+free-code
+```
+
+```powershell
+$env:ANTHROPIC_API_KEY="sk-ant-..."
 free-code
 ```
 
@@ -86,13 +103,22 @@ free-code
 ## Requirements
 
 - [Bun](https://bun.sh) >= 1.3.11
-- macOS or Linux (Windows via WSL)
+- [Git](https://git-scm.com/)
+- macOS or Linux for `install.sh`
+- Windows 10/11 with PowerShell and Git for Windows (Git Bash) for `install.ps1`
 - An Anthropic API key (set `ANTHROPIC_API_KEY` in your environment)
 
 ```bash
-# Install Bun if you don't have it
+# Install Bun on macOS / Linux if you don't have it
 curl -fsSL https://bun.sh/install | bash
 ```
+
+```powershell
+# Install Bun on Windows PowerShell if you don't have it
+powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+Some features still require WSL2 or Unix-like environments, including sandboxing, tmux-backed swarms, and `mcp add-from-claude-desktop`.
 
 ---
 
@@ -100,8 +126,8 @@ curl -fsSL https://bun.sh/install | bash
 
 ```bash
 # Clone the repo
-git clone https://github.com/paoloanzn/claude-code.git
-cd claude-code
+git clone https://github.com/lsj-Damon/xcoder.git
+cd free-code
 
 # Install dependencies
 bun install
@@ -118,6 +144,8 @@ bun run build:dev:full
 # Compiled build (alternative output path) -- produces ./dist/cli
 bun run compile
 ```
+
+On Windows PowerShell, the native installer is the easiest path. If you build manually, run the resulting binary as `.\cli-dev.exe` and make sure `Git Bash` is installed.
 
 ### Build variants
 
@@ -159,6 +187,17 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Or use Claude.ai OAuth
 ./cli /login
+```
+
+```powershell
+# Windows PowerShell
+.\cli-dev.exe
+
+# Set your API key for this session
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+
+# Or use Claude.ai OAuth
+free-code /login
 ```
 
 ### Quick test
