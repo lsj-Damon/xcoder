@@ -125,6 +125,17 @@ providers:
     api_base: "https://w.ciykj.cn/v1"
 ```
 
+### Permissions Policy
+
+`xcoder.yaml` can also override the default confirmation behavior:
+
+```yaml
+permissions:
+  auto_yes_mode: "safe_except_delete_or_choice"
+```
+
+This mode auto-approves ordinary fetches, searches, MCP tool calls, and non-destructive shell commands, while still prompting for delete/remove actions, structured choice-style interactions, and explicit safety checks.
+
 ### Feishu Channel
 
 `xcoder.yaml` can also declare a Feishu channel server. The recommended local setup is Feishu/Lark long-connection mode (`connectionMode: "websocket"`), which lets `xcoder` keep an outbound connection and receive events without exposing your machine to the public internet.

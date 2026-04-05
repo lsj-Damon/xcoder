@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Channel notifications — lets an MCP server push user messages into the
  * conversation. A "channel" (Discord, Slack, SMS, etc.) is just an MCP server
  * that:
@@ -206,16 +206,6 @@ export function gateChannelServer(
     }
   }
 
-  // Overall runtime gate. After capability so normal MCP servers never hit
-  // this path. Before auth/policy so the killswitch works regardless of
-  // session state.
-  if (!preconfiguredByXcoder && !isChannelsEnabled()) {
-    return {
-      action: 'skip',
-      kind: 'disabled',
-      reason: 'channels feature is not currently available',
-    }
-  }
 
   // Session-level opt-in. xcoder-managed channels are added here automatically
   // from xcoder.yaml so they can participate in the existing notification and
@@ -234,6 +224,17 @@ export function gateChannelServer(
     entry.managedByXcoder === true &&
     isConfiguredManagedChannelServer(serverName)
 
+  // Overall runtime gate. After capability so normal MCP servers never hit
+  // this path. Before auth/policy so the killswitch works regardless of
+  // session state. xcoder-managed channels are configured explicitly by the
+  // local user and should not depend on the remote channels rollout flag.
+  if (!isXcoderManagedServer && !isChannelsEnabled()) {
+    return {
+      action: 'skip',
+      kind: 'disabled',
+      reason: 'channels feature is not currently available',
+    }
+  }
   // OAuth-only. API key users (console) are blocked — there's no
   // channelsEnabled admin surface in console yet, so the policy opt-in
   // flow doesn't exist for them. Drop this when console parity lands.

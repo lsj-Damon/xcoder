@@ -70,6 +70,7 @@ type FeishuServerConfig = {
 
 const TOOL_NAME = 'send_message'
 const SERVER_VERSION = process.env.npm_package_version || '0.0.0'
+const BARE_APPROVAL_RE = /^\s*(y|yes|n|no)\s*$/i
 
 const SendMessageInputSchema = z.object({
   content: z.string().min(1),
@@ -88,6 +89,14 @@ const PermissionRequestNotificationSchema = z.object({
 })
 
 let latestTarget: FeishuTarget | null = null
+const pendingApprovalTargetByRequestId = new Map<string, string>()
+const pendingApprovalByTarget = new Map<
+  string,
+  {
+    requestId: string
+    target: FeishuTarget
+  }
+>()
 
 function getConfig(): FeishuServerConfig {
   const bindPort = parseInt(process.env.XCODER_FEISHU_BIND_PORT || '39876', 10)
@@ -201,6 +210,67 @@ function isAllowedSender(
   return !!target.openId && config.allowFrom.includes(target.openId)
 }
 
+function getTargetKey(target: FeishuTarget): string {
+  return `${target.receiveIdType}:${target.receiveId}`
+}
+
+function rememberPendingApproval(
+  requestId: string,
+  target: FeishuTarget,
+): void {
+  const key = getTargetKey(target)
+  const previous = pendingApprovalByTarget.get(key)
+  if (previous) {
+    pendingApprovalTargetByRequestId.delete(previous.requestId)
+  }
+  pendingApprovalByTarget.set(key, { requestId, target })
+  pendingApprovalTargetByRequestId.set(requestId, key)
+}
+
+function clearPendingApproval(requestId: string): void {
+  const key = pendingApprovalTargetByRequestId.get(requestId)
+  if (!key) {
+    return
+  }
+  pendingApprovalTargetByRequestId.delete(requestId)
+  const pending = pendingApprovalByTarget.get(key)
+  if (pending?.requestId === requestId) {
+    pendingApprovalByTarget.delete(key)
+  }
+}
+
+function resolveApprovalFromText(
+  target: FeishuTarget | null,
+  text: string,
+): { requestId: string; behavior: 'allow' | 'deny' } | null {
+  const explicitMatch = text.match(PERMISSION_REPLY_RE)
+  if (explicitMatch) {
+    return {
+      requestId: explicitMatch[2]!.toLowerCase(),
+      behavior: /^y(es)?$/i.test(explicitMatch[1] || '') ? 'allow' : 'deny',
+    }
+  }
+
+  if (!target) {
+    return null
+  }
+
+  const bareMatch = text.match(BARE_APPROVAL_RE)
+  if (!bareMatch) {
+    return null
+  }
+
+  const pending = pendingApprovalByTarget.get(getTargetKey(target))
+  if (!pending) {
+    return null
+  }
+
+  return {
+    requestId: pending.requestId,
+    behavior: /^y(es)?$/i.test(bareMatch[1] || '') ? 'allow' : 'deny',
+  }
+}
+
 async function sendFeishuTextMessage(
   client: Lark.Client,
   target: FeishuTarget,
@@ -273,7 +343,9 @@ function buildPermissionPrompt(params: ChannelPermissionRequestParams): string {
     `Why: ${params.description}`,
     `Input: ${params.input_preview}`,
     '',
-    `Reply with: yes ${params.request_id}`,
+    `Reply with: Yes`,
+    `Or: No`,
+    `You can also reply with: yes ${params.request_id}`,
     `Or: no ${params.request_id}`,
   ].join('\n')
 }
@@ -299,14 +371,16 @@ async function handleInboundEvent(
 
   latestTarget = target
 
-  const approvalMatch = config.approvalEnabled ? text.match(PERMISSION_REPLY_RE) : null
-  if (approvalMatch) {
-    const behavior = /^y(es)?$/i.test(approvalMatch[1] || '') ? 'allow' : 'deny'
+  const approvalDecision = config.approvalEnabled
+    ? resolveApprovalFromText(target, text)
+    : null
+  if (approvalDecision) {
+    clearPendingApproval(approvalDecision.requestId)
     await server.notification({
       method: CHANNEL_PERMISSION_METHOD,
       params: {
-        request_id: approvalMatch[2]!.toLowerCase(),
-        behavior,
+        request_id: approvalDecision.requestId,
+        behavior: approvalDecision.behavior,
       },
     })
     return
@@ -431,7 +505,7 @@ async function start(): Promise<void> {
         },
       },
       instructions:
-        'Feishu channel server for xcoder. Supports inbound message relay, outbound send_message, and remote permission approvals.',
+        'Feishu channel server for xcoder. When a message arrives from <channel source="feishu">, the human on Feishu cannot see plain terminal-only assistant text. Use this server\'s send_message tool to reply to that conversation. Supports inbound message relay, outbound send_message, and remote permission approvals.',
     },
   )
 
@@ -440,7 +514,7 @@ async function start(): Promise<void> {
       {
         name: TOOL_NAME,
         description:
-          'Send a message to Feishu. If receive_id and receive_id_type are omitted, the most recent inbound Feishu conversation is used.',
+          'Send a message back to Feishu. Use this to reply to inbound Feishu channel messages; plain assistant text in the terminal is not visible in Feishu. If receive_id and receive_id_type are omitted, the most recent inbound Feishu conversation is used.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -502,8 +576,10 @@ async function start(): Promise<void> {
 
       const prompt = buildPermissionPrompt(notification.params)
       try {
+        rememberPendingApproval(notification.params.request_id, target)
         await sendFeishuTextMessage(client, target, prompt)
       } catch (error) {
+        clearPendingApproval(notification.params.request_id)
         logInfo(
           `Failed to forward permission request ${notification.params.request_id}: ${error instanceof Error ? error.message : String(error)}`,
         )

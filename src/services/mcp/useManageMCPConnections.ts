@@ -180,12 +180,19 @@ export function useManageMCPConnections(
     if (feature('KAIROS') || feature('KAIROS_CHANNELS')) {
       const callbacks = channelPermCallbacksRef.current
       if (!callbacks) return
+      const hasXcoderManagedChannels = getAllowedChannels().some(
+        entry =>
+          entry.kind === 'server' &&
+          'managedByXcoder' in entry &&
+          entry.managedByXcoder === true,
+      )
       // GrowthBook runtime gate — separate from channels so channels can
       // ship without this. Checked at mount; mid-session flips need restart.
       // If off, callbacks never go into AppState → interactiveHandler sees
       // undefined → never sends → intercept has nothing pending → "yes tbxkq"
       // flows to Claude as normal chat. One gate, full disable.
-      if (!isChannelPermissionRelayEnabled()) return
+      if (!hasXcoderManagedChannels && !isChannelPermissionRelayEnabled())
+        return
       setAppState(prev => {
         if (prev.channelPermissionCallbacks === callbacks) return prev
         return { ...prev, channelPermissionCallbacks: callbacks }

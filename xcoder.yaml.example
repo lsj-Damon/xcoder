@@ -12,6 +12,9 @@ providers:
     api_key_env: "OPENAI_API_KEY"
     api_base: "https://api.openai.com/v1"
 
+permissions:
+  auto_yes_mode: "safe_except_delete_or_choice"
+
 channels:
   feishu:
     enabled: false

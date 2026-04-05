@@ -49,6 +49,7 @@ import {
   permissionRuleValueFromString,
   permissionRuleValueToString,
 } from './permissionRuleParser.js'
+import { shouldAutoApprovePermissionRequest } from './autoYes.js'
 import {
   deletePermissionRuleFromSettings,
   type PermissionRuleFromEditableSettings,
@@ -1313,6 +1314,24 @@ async function hasPermissionsToUseToolInner(
     logForDebugging(
       `Permission suggestions for ${tool.name}: ${jsonStringify(result.suggestions, null, 2)}`,
     )
+  }
+
+  if (
+    result.behavior === 'ask' &&
+    shouldAutoApprovePermissionRequest(tool, input, result)
+  ) {
+    logForDebugging(
+      `Auto-approved ${tool.name} via xcoder.yaml permissions policy`,
+    )
+    return {
+      behavior: 'allow',
+      updatedInput: getUpdatedInputOrFallback(result, input),
+      userModified: false,
+      decisionReason: {
+        type: 'other',
+        reason: 'Auto-approved by xcoder.yaml permissions policy',
+      },
+    }
   }
 
   return result

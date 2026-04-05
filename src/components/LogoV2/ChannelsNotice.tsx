@@ -30,7 +30,9 @@ export function ChannelsNotice() {
     return null;
   }
   const hasNonDev = channels.some(_temp2);
-  const flag = getHasDevChannels() && hasNonDev ? "Channels" : getHasDevChannels() ? "--dangerously-load-development-channels" : "--channels";
+  const hasXcoderManaged = channels.some(isManagedByXcoder);
+  const hasFlagManagedChannels = channels.some(c => !isManagedByXcoder(c));
+  const flag = !hasFlagManagedChannels && hasXcoderManaged ? "xcoder.yaml channels" : getHasDevChannels() && hasNonDev ? "Channels" : getHasDevChannels() ? "--dangerously-load-development-channels" : "--channels";
   if (disabled) {
     let t1;
     if ($[0] !== flag || $[1] !== list) {
@@ -135,7 +137,7 @@ export function ChannelsNotice() {
   }
   let t2;
   if ($[24] !== flag) {
-    t2 = <Text dimColor={true}>Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Restart Free Code without {flag} to disable.</Text>;
+    t2 = <Text dimColor={true}>{flag === "xcoder.yaml channels" ? "Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Disable channels.feishu in xcoder.yaml to turn this off." : <>Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Restart Free Code without {flag} to disable.</>}</Text>;
     $[24] = flag;
     $[25] = t2;
   } else {
@@ -183,18 +185,22 @@ function _temp() {
     };
   }
   const l = ch.map(formatEntry).join(", ");
+  const hasStandardChannelGate = ch.some(c => !isManagedByXcoder(c));
   const sub = getSubscriptionType();
   const managed = sub === "team" || sub === "enterprise";
   const policy = getSettingsForSource("policySettings");
   const allowlist = getEffectiveChannelAllowlist(sub, policy?.allowedChannelPlugins);
   return {
     channels: ch,
-    disabled: !isChannelsEnabled(),
-    noAuth: !getClaudeAIOAuthTokens()?.accessToken,
-    policyBlocked: managed && policy?.channelsEnabled !== true,
+    disabled: hasStandardChannelGate && !isChannelsEnabled(),
+    noAuth: hasStandardChannelGate && !getClaudeAIOAuthTokens()?.accessToken,
+    policyBlocked: hasStandardChannelGate && managed && policy?.channelsEnabled !== true,
     list: l,
     unmatched: findUnmatched(ch, allowlist)
   };
+}
+function isManagedByXcoder(entry: ChannelEntry): boolean {
+  return entry.kind === 'server' && 'managedByXcoder' in entry && entry.managedByXcoder === true;
 }
 function formatEntry(c: ChannelEntry): string {
   return c.kind === 'plugin' ? `plugin:${c.name}@${c.marketplace}` : `server:${c.name}`;
@@ -234,6 +240,9 @@ function findUnmatched(entries: readonly ChannelEntry[], allowlist: ReturnType<t
   const out: Unmatched[] = [];
   for (const entry of entries) {
     if (entry.kind === 'server') {
+      if (isManagedByXcoder(entry)) {
+        continue;
+      }
       if (!configured.has(entry.name)) {
         out.push({
           entry,

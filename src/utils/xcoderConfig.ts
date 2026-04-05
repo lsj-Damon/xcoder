@@ -17,6 +17,10 @@ export const XcoderProviderTypeSchema = z.enum([
   'openai-compatible',
 ])
 
+export const XcoderAutoYesModeSchema = z.enum([
+  'safe_except_delete_or_choice',
+])
+
 const ProviderConfigSchema = z
   .object({
     type: XcoderProviderTypeSchema.optional(),
@@ -114,6 +118,13 @@ const XcoderChannelsSchema = z
   })
   .passthrough()
 
+const XcoderPermissionsSchema = z
+  .object({
+    auto_yes_mode: XcoderAutoYesModeSchema.optional(),
+    autoYesMode: XcoderAutoYesModeSchema.optional(),
+  })
+  .passthrough()
+
 const XcoderConfigSchema = z
   .object({
     xcoder: z
@@ -123,10 +134,12 @@ const XcoderConfigSchema = z
       .optional(),
     providers: z.record(z.string(), ProviderConfigSchema).optional(),
     channels: XcoderChannelsSchema.optional(),
+    permissions: XcoderPermissionsSchema.optional(),
   })
   .passthrough()
 
 export type XcoderProviderType = z.infer<typeof XcoderProviderTypeSchema>
+export type XcoderAutoYesMode = z.infer<typeof XcoderAutoYesModeSchema>
 export type XcoderConfig = z.infer<typeof XcoderConfigSchema>
 export type XcoderProviderBackend = 'anthropic' | 'openai'
 export type XcoderFeishuChannelConfig = z.infer<
@@ -455,6 +468,15 @@ export function getConfiguredProviderApiKey(
   }
 
   return null
+}
+
+export function getConfiguredAutoYesMode(): XcoderAutoYesMode | null {
+  const config = getXcoderConfig()
+  return (
+    config?.permissions?.auto_yes_mode ||
+    config?.permissions?.autoYesMode ||
+    null
+  )
 }
 
 export function getConfiguredFeishuChannelConfig():
