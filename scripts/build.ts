@@ -61,7 +61,17 @@ function runCommand(cmd: string[]): string | null {
     return null
   }
 
-  return new TextDecoder().decode(proc.stdout).trim() || null
+  const output = new TextDecoder().decode(proc.stdout)
+  const cleaned = output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(
+      line =>
+        line.length > 0 &&
+        !line.includes('ANOMALY: use of REX.w is meaningless'),
+    )
+
+  return cleaned || null
 }
 
 function getDevVersion(baseVersion: string): string {
@@ -119,7 +129,10 @@ const outfile = compile
 const buildTime = new Date().toISOString()
 const version = dev ? getDevVersion(pkg.version) : pkg.version
 
-mkdirSync(dirname(outfile), { recursive: true })
+const outdir = dirname(outfile)
+if (outdir !== '.') {
+  mkdirSync(outdir, { recursive: true })
+}
 
 const externals = [
   '@ant/*',
@@ -156,7 +169,7 @@ const defines = {
 } as const
 
 const cmd = [
-  'bun',
+  process.execPath,
   'build',
   './src/entrypoints/cli.tsx',
   '--compile',

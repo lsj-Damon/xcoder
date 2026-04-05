@@ -199,6 +199,7 @@ import { filterExistingPaths, getKnownPathsForRepo } from './utils/githubRepoPat
 import { clearPluginCache, loadAllPluginsCacheOnly } from './utils/plugins/pluginLoader.js';
 import { migrateChangelogFromConfig } from './utils/releaseNotes.js';
 import { SandboxManager } from './utils/sandbox/sandbox-adapter.js';
+import { getConfiguredChannelEntriesFromXcoderConfig, getConfiguredMcpServersFromXcoderConfig } from './utils/xcoderConfig.js';
 import { fetchSession, prepareApiRequest } from './utils/teleport/api.js';
 import { checkOutTeleportedSessionBranch, processMessagesForTeleportResume, teleportToRemoteWithErrorHandling, validateGitState, validateSessionRepository } from './utils/teleport.js';
 import { shouldEnableThinkingByDefault, type ThinkingConfig } from './utils/thinking.js';
@@ -1522,6 +1523,14 @@ async function run(): Promise<CommanderCommand> {
       }
     }
 
+    const configuredChannelMcpServers = getConfiguredMcpServersFromXcoderConfig();
+    if (Object.keys(configuredChannelMcpServers).length > 0) {
+      dynamicMcpConfig = {
+        ...dynamicMcpConfig,
+        ...configuredChannelMcpServers
+      };
+    }
+
     // Extract Claude in Chrome option and enforce claude.ai subscriber check (unless user is ant)
     const chromeOpts = options as {
       chrome?: boolean;
@@ -1640,6 +1649,7 @@ async function run(): Promise<CommanderCommand> {
     // and only appends to allowedChannels on accept.
     let devChannels: ChannelEntry[] | undefined;
     if (feature('KAIROS') || feature('KAIROS_CHANNELS')) {
+      const configuredChannelEntries = getConfiguredChannelEntriesFromXcoderConfig();
       // Parse plugin:name@marketplace / server:Y tags into typed entries.
       // Tag decides trust model downstream: plugin-kind hits marketplace
       // verification + GrowthBook allowlist, server-kind always fails
@@ -1689,10 +1699,13 @@ async function run(): Promise<CommanderCommand> {
       // listening) in the startup screen. gateChannelServer() enforces.
       // --channels works in both interactive and print/SDK modes; dev-channels
       // stays interactive-only (requires a confirmation dialog).
-      let channelEntries: ChannelEntry[] = [];
+      let channelEntries: ChannelEntry[] = [...configuredChannelEntries];
       if (rawChannels && rawChannels.length > 0) {
-        channelEntries = parseChannelEntries(rawChannels, '--channels');
-        setAllowedChannels(channelEntries);
+        channelEntries = [...channelEntries, ...parseChannelEntries(rawChannels, '--channels')];
+      }
+      const dedupedChannelEntries = uniqBy(channelEntries, entry => entry.kind === 'plugin' ? `plugin:${entry.name}@${entry.marketplace}` : `server:${entry.name}`);
+      if (dedupedChannelEntries.length > 0) {
+        setAllowedChannels(dedupedChannelEntries);
       }
       if (!isNonInteractiveSession) {
         if (rawDev && rawDev.length > 0) {
@@ -1705,15 +1718,15 @@ async function run(): Promise<CommanderCommand> {
       // Per-server gate outcomes land in tengu_mcp_channel_gate once
       // servers connect. Dev entries go through a confirmation dialog after
       // this — dev_plugins captures what was typed, not what was accepted.
-      if (channelEntries.length > 0 || (devChannels?.length ?? 0) > 0) {
+      if (dedupedChannelEntries.length > 0 || (devChannels?.length ?? 0) > 0) {
         const joinPluginIds = (entries: ChannelEntry[]) => {
           const ids = entries.flatMap(e => e.kind === 'plugin' ? [`${e.name}@${e.marketplace}`] : []);
           return ids.length > 0 ? ids.sort().join(',') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS : undefined;
         };
         logEvent('tengu_mcp_channel_flags', {
-          channels_count: channelEntries.length,
+          channels_count: dedupedChannelEntries.length,
           dev_count: devChannels?.length ?? 0,
-          plugins: joinPluginIds(channelEntries),
+          plugins: joinPluginIds(dedupedChannelEntries),
           dev_plugins: joinPluginIds(devChannels ?? [])
         });
       }

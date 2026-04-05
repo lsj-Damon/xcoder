@@ -1,5 +1,10 @@
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../../services/analytics/index.js'
 import { isEnvTruthy } from '../envUtils.js'
+import {
+  getActiveProviderSelection,
+  isAnthropicConfiguredProvider,
+  isOpenAIProviderConfigured,
+} from '../xcoderConfig.js'
 
 export type APIProvider = 'firstParty' | 'bedrock' | 'vertex' | 'foundry'
 
@@ -17,13 +22,32 @@ export function getAPIProviderForStatsig(): AnalyticsMetadata_I_VERIFIED_THIS_IS
   return getAPIProvider() as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
 }
 
+export function getConfiguredProviderSelection() {
+  return getActiveProviderSelection()
+}
+
+export function isConfiguredOpenAIProvider(): boolean {
+  return isOpenAIProviderConfigured()
+}
+
+export function isConfiguredAnthropicProvider(): boolean {
+  return isAnthropicConfiguredProvider()
+}
+
 /**
  * Check if ANTHROPIC_BASE_URL is a first-party Anthropic API URL.
  * Returns true if not set (default API) or points to api.anthropic.com
  * (or api-staging.anthropic.com for ant users).
  */
 export function isFirstPartyAnthropicBaseUrl(): boolean {
-  const baseUrl = process.env.ANTHROPIC_BASE_URL
+  const configuredSelection = getActiveProviderSelection()
+  if (configuredSelection?.backend === 'openai') {
+    return false
+  }
+  const baseUrl =
+    configuredSelection?.backend === 'anthropic'
+      ? configuredSelection.apiBase
+      : process.env.ANTHROPIC_BASE_URL
   if (!baseUrl) {
     return true
   }

@@ -188,6 +188,7 @@ import {
   isDeferredToolsDeltaEnabled,
   isToolSearchEnabled,
 } from 'src/utils/toolSearch.js'
+import { isConfiguredOpenAIProvider } from 'src/utils/model/providers.js'
 import { API_MAX_MEDIA_PER_REQUEST } from '../../constants/apiLimits.js'
 import { ADVISOR_BETA_HEADER } from '../../constants/betas.js'
 import {
@@ -229,6 +230,7 @@ import { getInitializationStatus } from '../lsp/manager.js'
 import { isToolFromMcpServer } from '../mcp/utils.js'
 import { withStreamingVCR, withVCR } from '../vcr.js'
 import { CLIENT_REQUEST_ID_HEADER, getAnthropicClient } from './client.js'
+import { createOpenAIBetaMessage, queryOpenAIModelOnce } from './openai.js'
 import {
   API_ERROR_MESSAGE_PREFIX,
   CUSTOM_OFF_SWITCH_MESSAGE,
@@ -534,6 +536,28 @@ export async function verifyApiKey(
   // Skip API verification if running in print mode (isNonInteractiveSession)
   if (isNonInteractiveSession) {
     return true
+  }
+
+  if (isConfiguredOpenAIProvider()) {
+    try {
+      await createOpenAIBetaMessage({
+        model: getSmallFastModel(),
+        messages: [{ role: 'user', content: 'test' }],
+        maxTokens: 1,
+      })
+      return true
+    } catch (error) {
+      logError(error)
+      if (
+        error instanceof Error &&
+        /401|403|unauthorized|invalid api key|authentication/i.test(
+          error.message,
+        )
+      ) {
+        return false
+      }
+      throw error
+    }
   }
 
   try {
@@ -1045,6 +1069,55 @@ async function* queryModel(
       new Error(CUSTOM_OFF_SWITCH_MESSAGE),
       options.model,
     )
+    return
+  }
+
+  if (isConfiguredOpenAIProvider()) {
+    const filteredTools = tools.filter(
+      t => !toolMatchesName(t, TOOL_SEARCH_TOOL_NAME),
+    )
+    const toolSchemas = await Promise.all(
+      filteredTools.map(tool =>
+        toolToAPISchema(tool, {
+          getToolPermissionContext: options.getToolPermissionContext,
+          tools,
+          agents: options.agents,
+          allowedAgentTypes: options.allowedAgentTypes,
+          model: options.model,
+        }),
+      ),
+    )
+    const allTools = [...toolSchemas, ...(options.extraToolSchemas ?? [])]
+    let messagesForAPI = normalizeMessagesForAPI(messages, filteredTools)
+    messagesForAPI = ensureToolResultPairing(messagesForAPI)
+
+    const openAISystemPrompt = asSystemPrompt(
+      [
+        getCLISyspromptPrefix({
+          isNonInteractive: options.isNonInteractiveSession,
+          hasAppendSystemPrompt: options.hasAppendSystemPrompt,
+        }),
+        ...systemPrompt,
+      ].filter(Boolean),
+    )
+
+    const assistantMessage = await queryOpenAIModelOnce({
+      model: options.model,
+      system: openAISystemPrompt.map(text => ({ type: 'text' as const, text })),
+      messages: messagesForAPI.map(message => ({
+        role: message.message.role,
+        content: message.message.content,
+      })),
+      tools: allTools,
+      toolChoice: options.toolChoice,
+      maxTokens:
+        options.maxOutputTokensOverride ??
+        getMaxOutputTokensForModel(options.model),
+      temperature: options.temperatureOverride,
+      signal,
+    })
+
+    yield assistantMessage
     return
   }
 

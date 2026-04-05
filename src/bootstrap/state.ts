@@ -36,7 +36,12 @@ import type { SessionId } from 'src/types/ids.js'
 // acceptance leak allowlist-bypass to the --channels entries.
 export type ChannelEntry =
   | { kind: 'plugin'; name: string; marketplace: string; dev?: boolean }
-  | { kind: 'server'; name: string; dev?: boolean }
+  | {
+      kind: 'server'
+      name: string
+      dev?: boolean
+      managedByXcoder?: boolean
+    }
 
 export type AttributedCounter = {
   add(value: number, additionalAttributes?: Attributes): void
@@ -1755,4 +1760,3 @@ export function getPromptId(): string | null {
 export function setPromptId(id: string | null): void {
   STATE.promptId = id
 }
-

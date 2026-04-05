@@ -1,4 +1,4 @@
-/**
+﻿/**
  * User-Agent string helpers.
  *
  * Kept dependency-free so SDK-bundled code (bridge, cli/transports) can
@@ -6,5 +6,13 @@
  */
 
 export function getClaudeCodeUserAgent(): string {
-  return `claude-code/${MACRO.VERSION}`
+  return sanitizeHeaderValue(`claude-code/${MACRO.VERSION}`)
+}
+
+function sanitizeHeaderValue(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[^\x20-\x7E]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

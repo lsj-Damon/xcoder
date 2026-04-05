@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
   [string]$RepoUrl = 'https://github.com/lsj-Damon/xcoder.git',
@@ -75,6 +75,22 @@ function Test-VersionGte([string]$Actual, [string]$Minimum) {
   }
 
   return $ActualVersion -ge $MinimumVersion
+}
+
+function Test-LocalSourceTree([string]$Path) {
+  $RequiredPaths = @(
+    'package.json',
+    'scripts\build.ts',
+    'src\entrypoints\cli.tsx'
+  )
+
+  foreach ($RelativePath in $RequiredPaths) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Path $RelativePath) -PathType Leaf)) {
+      return $false
+    }
+  }
+
+  return $true
 }
 
 function Add-DirectoryToUserPath([string]$Directory) {
@@ -417,6 +433,10 @@ Write-Host ''
 
 Write-Info 'Starting Windows installation...'
 
+$CurrentDir = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$UseLocalSource = Test-LocalSourceTree $CurrentDir
+$SourceDir = $InstallDir
+
 if ($env:OS -ne 'Windows_NT') {
   Fail 'This installer is for native Windows PowerShell. Use install.sh on macOS or Linux.'
 }
@@ -434,7 +454,10 @@ Write-Ok "git-bash: $GitBashPath"
 
 $BunPath = Ensure-Bun
 
-if (Test-Path -LiteralPath $InstallDir) {
+if ($UseLocalSource) {
+  $SourceDir = $CurrentDir
+  Write-Ok "Using local source tree: $SourceDir"
+} elseif (Test-Path -LiteralPath $InstallDir) {
   if (-not (Test-Path -LiteralPath (Join-Path $InstallDir '.git'))) {
     if (Test-ArchiveInstall $InstallDir) {
       Write-Warn "$InstallDir was previously installed from the ZIP fallback. Reinstalling from a fresh archive snapshot..."
@@ -464,7 +487,7 @@ if (Test-Path -LiteralPath $InstallDir) {
 }
 
 if (-not $DryRun) {
-  Push-Location $InstallDir
+  Push-Location $SourceDir
   try {
     Write-Info 'Installing dependencies...'
     & $BunPath install --frozen-lockfile
@@ -491,9 +514,9 @@ if (-not $DryRun) {
 }
 
 $BinaryPath = if ($DryRun) {
-  Join-Path $InstallDir 'cli-dev.exe'
+  Join-Path $SourceDir 'cli-dev.exe'
 } else {
-  Resolve-BuiltBinary $InstallDir
+  Resolve-BuiltBinary $SourceDir
 }
 
 if (-not $BinaryPath) {
@@ -522,7 +545,7 @@ Write-Host ''
 Write-Host '  Or log in with Claude.ai:'
 Write-Host '    xcoder /login' -ForegroundColor Cyan
 Write-Host ''
-Write-Host "  Source: $InstallDir" -ForegroundColor DarkGray
+Write-Host "  Source: $SourceDir" -ForegroundColor DarkGray
 Write-Host "  Binary: $BinaryPath" -ForegroundColor DarkGray
 Write-Host "  Link:   $(Join-Path $BinDir 'xcoder.cmd')" -ForegroundColor DarkGray
 Write-Host ''

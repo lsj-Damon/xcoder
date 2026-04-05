@@ -28,6 +28,10 @@ import {
   getVertexRegionForModel,
   isEnvTruthy,
 } from '../../utils/envUtils.js'
+import {
+  getActiveProviderSelection,
+  isOpenAIProviderConfigured,
+} from '../../utils/xcoderConfig.js'
 
 /**
  * Environment variables for different client types:
@@ -98,6 +102,13 @@ export async function getAnthropicClient({
   fetchOverride?: ClientOptions['fetch']
   source?: string
 }): Promise<Anthropic> {
+  if (isOpenAIProviderConfigured()) {
+    throw new Error(
+      'OpenAI provider is active. Anthropic client should not be used for this request.',
+    )
+  }
+
+  const configuredSelection = getActiveProviderSelection()
   const containerId = process.env.CLAUDE_CODE_CONTAINER_ID
   const remoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID
   const clientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP
@@ -113,6 +124,9 @@ export async function getAnthropicClient({
       : {}),
     // SDK consumers can identify their app/library for backend analytics
     ...(clientApp ? { 'x-client-app': clientApp } : {}),
+    ...(configuredSelection?.backend === 'anthropic'
+      ? configuredSelection.extraHeaders
+      : {}),
   }
 
   // Log API client configuration for HFI debugging
@@ -299,15 +313,26 @@ export async function getAnthropicClient({
 
   // Determine authentication method based on available tokens
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
-    apiKey: isClaudeAISubscriber() ? null : apiKey || getAnthropicApiKey(),
-    authToken: isClaudeAISubscriber()
-      ? getClaudeAIOAuthTokens()?.accessToken
-      : undefined,
+    apiKey:
+      configuredSelection?.backend === 'anthropic'
+        ? apiKey || getAnthropicApiKey()
+        : isClaudeAISubscriber()
+          ? null
+          : apiKey || getAnthropicApiKey(),
+    authToken:
+      configuredSelection?.backend === 'anthropic'
+        ? undefined
+        : isClaudeAISubscriber()
+          ? getClaudeAIOAuthTokens()?.accessToken
+          : undefined,
     // Set baseURL from OAuth config when using staging OAuth
-    ...(process.env.USER_TYPE === 'ant' &&
-    isEnvTruthy(process.env.USE_STAGING_OAUTH)
-      ? { baseURL: getOauthConfig().BASE_API_URL }
-      : {}),
+    ...(configuredSelection?.backend === 'anthropic' &&
+    configuredSelection.apiBase
+      ? { baseURL: configuredSelection.apiBase }
+      : process.env.USER_TYPE === 'ant' &&
+          isEnvTruthy(process.env.USE_STAGING_OAUTH)
+        ? { baseURL: getOauthConfig().BASE_API_URL }
+        : {}),
     ...ARGS,
     ...(isDebugToStdErr() && { logger: createStderrLogger() }),
   }

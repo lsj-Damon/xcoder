@@ -31,7 +31,9 @@ export function getUserAgent(): string {
   // so the read picks up the same setWorkload() value as getAttributionHeader.
   const workload = getWorkload()
   const workloadSuffix = workload ? `, workload/${workload}` : ''
-  return `claude-cli/${MACRO.VERSION} (${process.env.USER_TYPE}, ${process.env.CLAUDE_CODE_ENTRYPOINT ?? 'cli'}${agentSdkVersion}${clientApp}${workloadSuffix})`
+  return sanitizeHeaderValue(
+    `claude-cli/${MACRO.VERSION} (${process.env.USER_TYPE}, ${process.env.CLAUDE_CODE_ENTRYPOINT ?? 'cli'}${agentSdkVersion}${clientApp}${workloadSuffix})`,
+  )
 }
 
 export function getMCPUserAgent(): string {
@@ -46,7 +48,7 @@ export function getMCPUserAgent(): string {
     parts.push(`client-app/${process.env.CLAUDE_AGENT_SDK_CLIENT_APP}`)
   }
   const suffix = parts.length > 0 ? ` (${parts.join(', ')})` : ''
-  return `claude-code/${MACRO.VERSION}${suffix}`
+  return sanitizeHeaderValue(`claude-code/${MACRO.VERSION}${suffix}`)
 }
 
 // User-Agent for WebFetch requests to arbitrary sites. `Claude-User` is
@@ -54,7 +56,17 @@ export function getMCPUserAgent(): string {
 // operators match in robots.txt); the claude-code suffix lets them distinguish
 // local CLI traffic from claude.ai server-side fetches.
 export function getWebFetchUserAgent(): string {
-  return `Claude-User (${getClaudeCodeUserAgent()}; +https://support.anthropic.com/)`
+  return sanitizeHeaderValue(
+    `Claude-User (${getClaudeCodeUserAgent()}; +https://support.anthropic.com/)`,
+  )
+}
+
+function sanitizeHeaderValue(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[^\x20-\x7E]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export type AuthHeaders = {

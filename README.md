@@ -13,6 +13,7 @@ powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/insta
 ```
 
 > The installers check your system, install Bun if needed, clone the repo, build with all features enabled, and put `xcoder` on your PATH. On native Windows, install `Git for Windows` first because the CLI expects `Git Bash` to be available.
+> When you run an installer from the repository root, it prefers the current local source tree and only falls back to remote fetch if no valid local source tree is detected.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="xcoder screenshot" width="800" />
@@ -86,6 +87,106 @@ powershell -c "irm https://raw.githubusercontent.com/lsj-Damon/xcoder/main/insta
 ```
 
 This will check your system, install Bun if needed, clone the repo, build the binary with all experimental features enabled, and expose it as `xcoder` on your PATH. If `git clone` is corrupted by endpoint/security software on Windows, the installer automatically falls back to the GitHub source ZIP.
+
+### xcoder.yaml
+
+`xcoder` can read a standalone `xcoder.yaml` file from the project root.
+
+Copy [xcoder.yaml.example](/d:/Develop/workspace/free-code/xcoder.yaml.example) to `xcoder.yaml` and choose the active model as `provider:model`.
+
+Example:
+
+```yaml
+xcoder:
+  model: "relay:claude-sonnet-4-6"
+
+providers:
+  relay:
+    type: "anthropic-compatible"
+    api_key_env: "ANTHROPIC_API_KEY"
+    api_base: "https://your-relay.example.com"
+
+  openai:
+    type: "openai"
+    api_key_env: "OPENAI_API_KEY"
+    api_base: "https://api.openai.com/v1"
+```
+
+For an OpenAI-compatible relay such as `https://w.ciykj.cn`, a concrete config looks like:
+
+```yaml
+xcoder:
+  model: "relay:gpt-5.4"
+
+providers:
+  relay:
+    type: "openai-compatible"
+    api_key_env: "OPENAI_API_KEY"
+    api_base: "https://w.ciykj.cn/v1"
+```
+
+### Feishu Channel
+
+`xcoder.yaml` can also declare a Feishu channel server. The recommended local setup is Feishu/Lark long-connection mode (`connectionMode: "websocket"`), which lets `xcoder` keep an outbound connection and receive events without exposing your machine to the public internet.
+
+Recommended local example:
+
+```yaml
+channels:
+  feishu:
+    enabled: true
+    mode: "mcp"
+    connectionMode: "websocket"
+    domain: "feishu"
+    dmPolicy: "pairing"
+    server_name: "feishu"
+    command: "bun"
+    args:
+      - "run"
+      - "./channels/feishu-channel/server.ts"
+    accounts:
+      main:
+        app_id_env: "FEISHU_APP_ID"
+        app_secret_env: "FEISHU_APP_SECRET"
+        encrypt_key_env: "FEISHU_ENCRYPT_KEY"
+        verification_token_env: "FEISHU_VERIFICATION_TOKEN"
+        bot_name: "xcoder"
+    allow_from: []
+    approval:
+      enabled: true
+```
+
+Use `domain: "lark"` for the international Lark endpoint instead of mainland Feishu.
+
+If you prefer webhook mode, add a public callback URL:
+
+```yaml
+channels:
+  feishu:
+    connectionMode: "webhook"
+    bind_host: "127.0.0.1"
+    bind_port: 39876
+    callback_path: "/feishu/events"
+    public_base_url: "https://your-public-domain.example.com"
+```
+
+In webhook mode, the local server listens on:
+
+`http://127.0.0.1:39876/feishu/events`
+
+Expose that path through your own tunnel or reverse proxy and use the public URL in Feishu's event subscription settings. In websocket mode, `public_base_url` is not needed.
+
+### Local Source Tree
+
+Run the installer from the repository root to install and launch the code you are currently editing:
+
+```bash
+bash ./install.sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
 After install, run:
 ```bash

@@ -1,0 +1,42 @@
+xcoder:
+  model: "relay:claude-sonnet-4-6"
+
+providers:
+  relay:
+    type: "anthropic-compatible"
+    api_key_env: "ANTHROPIC_API_KEY"
+    api_base: "https://your-relay.example.com"
+
+  openai:
+    type: "openai"
+    api_key_env: "OPENAI_API_KEY"
+    api_base: "https://api.openai.com/v1"
+
+channels:
+  feishu:
+    enabled: false
+    mode: "mcp"
+    connectionMode: "websocket"
+    domain: "feishu"
+    dmPolicy: "pairing"
+    server_name: "feishu"
+    command: "bun"
+    args:
+      - "run"
+      - "./channels/feishu-channel/server.ts"
+    accounts:
+      main:
+        app_id_env: "FEISHU_APP_ID"
+        app_secret_env: "FEISHU_APP_SECRET"
+        encrypt_key_env: "FEISHU_ENCRYPT_KEY"
+        verification_token_env: "FEISHU_VERIFICATION_TOKEN"
+        bot_name: "xcoder"
+    allow_from: []
+    approval:
+      enabled: true
+    # Webhook mode needs a public callback URL instead:
+    # connectionMode: "webhook"
+    # bind_host: "127.0.0.1"
+    # bind_port: 39876
+    # callback_path: "/feishu/events"
+    # public_base_url: "https://your-public-domain.example.com"

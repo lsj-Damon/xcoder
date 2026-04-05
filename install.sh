@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 # xcoder installer
@@ -15,11 +15,18 @@ RESET='\033[0m'
 REPO="https://github.com/lsj-Damon/xcoder.git"
 INSTALL_DIR="$HOME/xcoder"
 BUN_MIN_VERSION="1.3.11"
+SOURCE_DIR=""
 
 info()  { printf "${CYAN}[*]${RESET} %s\n" "$*"; }
 ok()    { printf "${GREEN}[+]${RESET} %s\n" "$*"; }
 warn()  { printf "${YELLOW}[!]${RESET} %s\n" "$*"; }
 fail()  { printf "${RED}[x]${RESET} %s\n" "$*"; exit 1; }
+
+is_local_source_tree() {
+  [ -f "./package.json" ] &&
+  [ -f "./scripts/build.ts" ] &&
+  [ -f "./src/entrypoints/cli.tsx" ]
+}
 
 header() {
   echo ""
@@ -113,23 +120,23 @@ clone_repo() {
 
 install_deps() {
   info "Installing dependencies..."
-  cd "$INSTALL_DIR"
+  cd "$SOURCE_DIR"
   bun install --frozen-lockfile 2>/dev/null || bun install
   ok "Dependencies installed"
 }
 
 build_binary() {
   info "Building xcoder (all experimental features enabled)..."
-  cd "$INSTALL_DIR"
+  cd "$SOURCE_DIR"
   bun run build:dev:full
-  ok "Binary built: $INSTALL_DIR/cli-dev"
+  ok "Binary built: $SOURCE_DIR/cli-dev"
 }
 
 link_binary() {
   local link_dir="$HOME/.local/bin"
   mkdir -p "$link_dir"
 
-  ln -sf "$INSTALL_DIR/cli-dev" "$link_dir/xcoder"
+  ln -sf "$SOURCE_DIR/cli-dev" "$link_dir/xcoder"
   ok "Symlinked: $link_dir/xcoder"
 
   if ! echo "$PATH" | tr ':' '\n' | grep -qx "$link_dir"; then
@@ -154,7 +161,14 @@ check_git
 check_bun
 echo ""
 
-clone_repo
+if is_local_source_tree; then
+  SOURCE_DIR="$(pwd)"
+  ok "Using local source tree: $SOURCE_DIR"
+else
+  clone_repo
+  SOURCE_DIR="$INSTALL_DIR"
+fi
+
 install_deps
 build_binary
 link_binary
@@ -172,7 +186,7 @@ echo ""
 printf "  ${BOLD}Or log in with Claude.ai:${RESET}\n"
 printf "    ${CYAN}xcoder /login${RESET}\n"
 echo ""
-printf "  ${DIM}Source: $INSTALL_DIR${RESET}\n"
-printf "  ${DIM}Binary: $INSTALL_DIR/cli-dev${RESET}\n"
+printf "  ${DIM}Source: $SOURCE_DIR${RESET}\n"
+printf "  ${DIM}Binary: $SOURCE_DIR/cli-dev${RESET}\n"
 printf "  ${DIM}Link:   ~/.local/bin/xcoder${RESET}\n"
 echo ""

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Channel notifications — lets an MCP server push user messages into the
  * conversation. A "channel" (Discord, Slack, SMS, etc.) is just an MCP server
  * that:
@@ -27,6 +27,7 @@ import {
 import { lazySchema } from '../../utils/lazySchema.js'
 import { parsePluginIdentifier } from '../../utils/plugins/pluginIdentifier.js'
 import { getSettingsForSource } from '../../utils/settings/settings.js'
+import { isConfiguredManagedChannelServer } from '../../utils/xcoderConfig.js'
 import { escapeXmlAttr } from '../../utils/xml.js'
 import {
   type ChannelAllowlistEntry,
@@ -208,7 +209,7 @@ export function gateChannelServer(
   // Overall runtime gate. After capability so normal MCP servers never hit
   // this path. Before auth/policy so the killswitch works regardless of
   // session state.
-  if (!isChannelsEnabled()) {
+  if (!preconfiguredByXcoder && !isChannelsEnabled()) {
     return {
       action: 'skip',
       kind: 'disabled',
@@ -216,10 +217,27 @@ export function gateChannelServer(
     }
   }
 
+  // Session-level opt-in. xcoder-managed channels are added here automatically
+  // from xcoder.yaml so they can participate in the existing notification and
+  // approval flow without requiring --channels.
+  const entry = findChannelEntry(serverName, getAllowedChannels())
+  if (!entry) {
+    return {
+      action: 'skip',
+      kind: 'session',
+      reason: `server ${serverName} not in --channels list for this session`,
+    }
+  }
+  const isXcoderManagedServer =
+    entry.kind === 'server' &&
+    'managedByXcoder' in entry &&
+    entry.managedByXcoder === true &&
+    isConfiguredManagedChannelServer(serverName)
+
   // OAuth-only. API key users (console) are blocked — there's no
   // channelsEnabled admin surface in console yet, so the policy opt-in
   // flow doesn't exist for them. Drop this when console parity lands.
-  if (!getClaudeAIOAuthTokens()?.accessToken) {
+  if (!isXcoderManagedServer && !getClaudeAIOAuthTokens()?.accessToken) {
     return {
       action: 'skip',
       kind: 'auth',
@@ -235,24 +253,12 @@ export function gateChannelServer(
   const sub = getSubscriptionType()
   const managed = sub === 'team' || sub === 'enterprise'
   const policy = managed ? getSettingsForSource('policySettings') : undefined
-  if (managed && policy?.channelsEnabled !== true) {
+  if (!isXcoderManagedServer && managed && policy?.channelsEnabled !== true) {
     return {
       action: 'skip',
       kind: 'policy',
       reason:
         'channels not enabled by org policy (set channelsEnabled: true in managed settings)',
-    }
-  }
-
-  // User-level session opt-in. A server must be explicitly listed in
-  // --channels to push inbound this session — protects against a trusted
-  // server surprise-adding the capability.
-  const entry = findChannelEntry(serverName, getAllowedChannels())
-  if (!entry) {
-    return {
-      action: 'skip',
-      kind: 'session',
-      reason: `server ${serverName} not in --channels list for this session`,
     }
   }
 
@@ -300,6 +306,9 @@ export function gateChannelServer(
       }
     }
   } else {
+    if (isXcoderManagedServer) {
+      return { action: 'register' }
+    }
     // server-kind: allowlist schema is {marketplace, plugin} — a server entry
     // can never match. Without this, --channels server:plugin:foo:bar would
     // match a plugin's runtime name and register with no allowlist check.
@@ -314,3 +323,4 @@ export function gateChannelServer(
 
   return { action: 'register' }
 }
+
