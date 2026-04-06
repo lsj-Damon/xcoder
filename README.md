@@ -171,6 +171,7 @@ channels:
       tool_events: true
       assistant_updates: true
       throttle_ms: 3000
+      progress_throttle_ms: 30000
 ```
 
 Use `domain: "lark"` for the international Lark endpoint instead of mainland Feishu.
@@ -207,6 +208,8 @@ channels:
 ```
 
 This mirrors key milestones such as "message received", tool start/finish/failure, permission results, progress summaries, and plain assistant text replies. It is designed for locked-screen use where the machine stays awake and online.
+
+`throttle_ms` controls ordinary mirror batching, while `progress_throttle_ms` specifically limits noisy progress updates such as long-running Bash execution summaries.
 
 ### Local Source Tree
 

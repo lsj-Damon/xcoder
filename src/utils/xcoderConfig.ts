@@ -50,6 +50,8 @@ const FeishuMirrorSchema = z
     toolEvents: z.boolean().optional(),
     assistant_updates: z.boolean().optional(),
     assistantUpdates: z.boolean().optional(),
+    progress_throttle_ms: z.number().int().positive().optional(),
+    progressThrottleMs: z.number().int().positive().optional(),
     throttle_ms: z.number().int().positive().optional(),
     throttleMs: z.number().int().positive().optional(),
   })
@@ -197,6 +199,7 @@ export type NormalizedFeishuChannelConfig = {
   mirrorToolEvents: boolean
   mirrorAssistantUpdates: boolean
   mirrorThrottleMs: number
+  mirrorProgressThrottleMs: number
 }
 
 let cachedConfigPath: string | null = null
@@ -523,6 +526,10 @@ export function getConfiguredFeishuChannelConfig():
   const mirrorAssistantUpdates =
     feishu.mirror?.assistant_updates !== false &&
     feishu.mirror?.assistantUpdates !== false
+  const mirrorProgressThrottleMs =
+    feishu.mirror?.progress_throttle_ms ||
+    feishu.mirror?.progressThrottleMs ||
+    30000
   const mirrorThrottleMs =
     feishu.mirror?.throttle_ms ||
     feishu.mirror?.throttleMs ||
@@ -546,6 +553,9 @@ export function getConfiguredFeishuChannelConfig():
     XCODER_FEISHU_MIRROR_ASSISTANT_UPDATES: mirrorAssistantUpdates
       ? '1'
       : '0',
+    XCODER_FEISHU_MIRROR_PROGRESS_THROTTLE_MS: String(
+      mirrorProgressThrottleMs,
+    ),
     XCODER_FEISHU_MIRROR_THROTTLE_MS: String(mirrorThrottleMs),
   }
 
@@ -634,6 +644,7 @@ export function getConfiguredFeishuChannelConfig():
     mirrorToolEvents,
     mirrorAssistantUpdates,
     mirrorThrottleMs,
+    mirrorProgressThrottleMs,
   }
 }
 

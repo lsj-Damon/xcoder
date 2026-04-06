@@ -77,6 +77,7 @@ type FeishuServerConfig = {
   mirrorToolEvents: boolean
   mirrorAssistantUpdates: boolean
   mirrorThrottleMs: number
+  mirrorProgressThrottleMs: number
 }
 
 const TOOL_NAME = 'send_message'
@@ -110,6 +111,7 @@ const pendingApprovalByTarget = new Map<
 >()
 let pendingMirrorMessages: ChannelMirrorStatusParams[] = []
 let mirrorFlushTimer: ReturnType<typeof setTimeout> | null = null
+const lastProgressMirrorAtByKey = new Map<string, number>()
 
 function getConfig(): FeishuServerConfig {
   const bindPort = parseInt(process.env.XCODER_FEISHU_BIND_PORT || '39876', 10)
@@ -143,6 +145,11 @@ function getConfig(): FeishuServerConfig {
       (process.env.XCODER_FEISHU_MIRROR_TOOL_EVENTS || '1') !== '0',
     mirrorAssistantUpdates:
       (process.env.XCODER_FEISHU_MIRROR_ASSISTANT_UPDATES || '1') !== '0',
+    mirrorProgressThrottleMs:
+      parseInt(
+        process.env.XCODER_FEISHU_MIRROR_PROGRESS_THROTTLE_MS || '30000',
+        10,
+      ) || 30000,
     mirrorThrottleMs:
       parseInt(process.env.XCODER_FEISHU_MIRROR_THROTTLE_MS || '3000', 10) ||
       3000,
@@ -354,6 +361,16 @@ function queueMirrorMessage(
     last.text === params.text
   ) {
     return
+  }
+
+  if (params.category === 'progress') {
+    const key = params.dedupeKey || params.text
+    const now = Date.now()
+    const lastSentAt = lastProgressMirrorAtByKey.get(key) || 0
+    if (now - lastSentAt < config.mirrorProgressThrottleMs) {
+      return
+    }
+    lastProgressMirrorAtByKey.set(key, now)
   }
 
   pendingMirrorMessages.push(params)

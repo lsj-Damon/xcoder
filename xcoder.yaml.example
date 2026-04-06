@@ -43,6 +43,7 @@ channels:
       tool_events: true
       assistant_updates: true
       throttle_ms: 3000
+      progress_throttle_ms: 30000
     # Webhook mode needs a public callback URL instead:
     # connectionMode: "webhook"
     # bind_host: "127.0.0.1"
