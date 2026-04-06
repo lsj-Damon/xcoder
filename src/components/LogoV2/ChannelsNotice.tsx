@@ -137,7 +137,7 @@ export function ChannelsNotice() {
   }
   let t2;
   if ($[24] !== flag) {
-    t2 = <Text dimColor={true}>{flag === "xcoder.yaml channels" ? "Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Disable channels.feishu in xcoder.yaml to turn this off." : <>Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Restart Free Code without {flag} to disable.</>}</Text>;
+    t2 = <Text dimColor={true}>{flag === "xcoder.yaml channels" ? "Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Disable channels.feishu in xcoder.yaml to turn this off." : <>Experimental · inbound messages will be pushed into this session, this carries prompt injection risks. Restart xcoder without {flag} to disable.</>}</Text>;
     $[24] = flag;
     $[25] = t2;
   } else {
