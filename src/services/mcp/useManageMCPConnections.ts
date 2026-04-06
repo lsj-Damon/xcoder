@@ -13,6 +13,7 @@ import {
   reconnectMcpServerImpl,
 } from './client.js'
 import type {
+  ConnectedMCPServer,
   MCPServerConnection,
   ScopedMcpServerConfig,
   ServerResource,
@@ -77,12 +78,18 @@ import {
   isChannelPermissionRelayEnabled,
 } from './channelPermissions.js'
 import {
+  CHANNEL_MIRROR_STATUS_CAPABILITY,
+  CHANNEL_MIRROR_STATUS_METHOD,
+  type ChannelMirrorCallbacks,
+} from './channelMirror.js'
+import {
   clearClaudeAIMcpConfigsCache,
   fetchClaudeAIMcpConfigsIfEligible,
 } from './claudeai.js'
 import { registerElicitationHandler } from './elicitationHandler.js'
 import { getMcpPrefix } from './mcpStringUtils.js'
 import { commandBelongsToServer, excludeStalePluginClients } from './utils.js'
+import { getConfiguredFeishuChannelConfig } from '../../utils/xcoderConfig.js'
 
 // Constants for reconnection with exponential backoff
 const MAX_RECONNECT_ATTEMPTS = 5
@@ -168,11 +175,50 @@ export function useManageMCPConnections(
   const channelPermCallbacksRef = useRef<ChannelPermissionCallbacks | null>(
     null,
   )
+  const channelMirrorCallbacksRef = useRef<ChannelMirrorCallbacks | null>(null)
   if (
     (feature('KAIROS') || feature('KAIROS_CHANNELS')) &&
     channelPermCallbacksRef.current === null
   ) {
     channelPermCallbacksRef.current = createChannelPermissionCallbacks()
+  }
+  if (
+    (feature('KAIROS') || feature('KAIROS_CHANNELS')) &&
+    channelMirrorCallbacksRef.current === null
+  ) {
+    channelMirrorCallbacksRef.current = {
+      notifyStatus(params) {
+        const feishu = getConfiguredFeishuChannelConfig()
+        if (!feishu?.mirrorEnabled) {
+          return
+        }
+
+        const clients = store
+          .getState()
+          .mcp.clients.filter(
+            (client): client is ConnectedMCPServer =>
+              client.type === 'connected' &&
+              client.name === feishu.serverName &&
+              client.capabilities?.experimental?.[
+                CHANNEL_MIRROR_STATUS_CAPABILITY
+              ] !== undefined,
+          )
+
+        for (const client of clients) {
+          void client.client
+            .notification({
+              method: CHANNEL_MIRROR_STATUS_METHOD,
+              params,
+            })
+            .catch(error => {
+              logMCPDebug(
+                client.name,
+                `Channel mirror notification failed: ${errorMessage(error)}`,
+              )
+            })
+        }
+      },
+    }
   }
   // Store callbacks in AppState so interactiveHandler.ts can reach them via
   // ctx.toolUseContext.getAppState(). One-time set — the ref is stable.
@@ -201,6 +247,22 @@ export function useManageMCPConnections(
         setAppState(prev => {
           if (prev.channelPermissionCallbacks === undefined) return prev
           return { ...prev, channelPermissionCallbacks: undefined }
+        })
+      }
+    }
+  }, [setAppState])
+  useEffect(() => {
+    if (feature('KAIROS') || feature('KAIROS_CHANNELS')) {
+      const callbacks = channelMirrorCallbacksRef.current
+      if (!callbacks) return
+      setAppState(prev => {
+        if (prev.channelMirrorCallbacks === callbacks) return prev
+        return { ...prev, channelMirrorCallbacks: callbacks }
+      })
+      return () => {
+        setAppState(prev => {
+          if (prev.channelMirrorCallbacks === undefined) return prev
+          return { ...prev, channelMirrorCallbacks: undefined }
         })
       }
     }
@@ -535,6 +597,21 @@ export function useManageMCPConnections(
                       origin: { kind: 'channel', server: client.name },
                       skipSlashCommands: true,
                     })
+                    const feishu = getConfiguredFeishuChannelConfig()
+                    if (
+                      feishu?.mirrorEnabled &&
+                      feishu.mirrorAssistantUpdates &&
+                      client.name === feishu.serverName
+                    ) {
+                      channelMirrorCallbacksRef.current?.notifyStatus({
+                        category: 'status',
+                        text: `已收到飞书消息，开始处理：${content.slice(0, 80)}`,
+                        dedupeKey:
+                          meta?.message_id
+                            ? `received:${meta.message_id}`
+                            : `received:${content.slice(0, 32)}`,
+                      })
+                    }
                   },
                 )
                 // Permission-reply handler — separate event, separate
@@ -562,6 +639,17 @@ export function useManageMCPConnections(
                         client.name,
                         `notifications/claude/channel/permission: ${request_id} → ${behavior} (${resolved ? 'matched pending' : 'no pending entry — stale or unknown ID'})`,
                       )
+                      if (resolved) {
+                        channelMirrorCallbacksRef.current?.notifyStatus({
+                          category: 'permission',
+                          text:
+                            behavior === 'allow'
+                              ? '已收到飞书许可，继续执行'
+                              : '飞书已拒绝本次操作',
+                          dedupeKey: `permission:${request_id}:${behavior}`,
+                          urgent: true,
+                        })
+                      }
                     },
                   )
                 }

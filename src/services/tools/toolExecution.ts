@@ -115,6 +115,7 @@ import {
   McpAuthError,
   McpToolCallError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from '../mcp/client.js'
+import { buildMirrorStatusFromToolProgress } from '../mcp/channelMirror.js'
 import { mcpInfoFromString } from '../mcp/mcpStringUtils.js'
 import { normalizeNameForMCP } from '../mcp/normalization.js'
 import type { MCPServerConnection } from '../mcp/types.js'
@@ -553,6 +554,12 @@ function streamedCheckPermissionsAndCallTool(
           data: progress.data,
         }),
       })
+      const mirrorStatus = buildMirrorStatusFromToolProgress(progress.data)
+      if (mirrorStatus) {
+        toolUseContext
+          .getAppState()
+          .channelMirrorCallbacks?.notifyStatus(mirrorStatus)
+      }
     },
   )
     .then(results => {

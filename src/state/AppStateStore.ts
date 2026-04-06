@@ -3,6 +3,7 @@ import type { TodoList } from 'src/utils/todo/types.js'
 import type { BridgePermissionCallbacks } from '../bridge/bridgePermissionCallbacks.js'
 import type { Command } from '../commands.js'
 import type { ChannelPermissionCallbacks } from '../services/mcp/channelPermissions.js'
+import type { ChannelMirrorCallbacks } from '../services/mcp/channelMirror.js'
 import type { ElicitationRequestEvent } from '../services/mcp/elicitationHandler.js'
 import type {
   MCPServerConnection,
@@ -449,6 +450,9 @@ export type AppState = DeepImmutable<{
   // Races against local UI + bridge + hooks + classifier via claim() in
   // interactiveHandler.ts. Constructed once in useManageMCPConnections.
   channelPermissionCallbacks?: ChannelPermissionCallbacks
+  // Channel mirror callbacks — sends summarized process updates back to
+  // remote channels such as Feishu.
+  channelMirrorCallbacks?: ChannelMirrorCallbacks
 }
 
 export type AppStateStore = Store<AppState>

@@ -37,6 +37,12 @@ channels:
     allow_from: []
     approval:
       enabled: true
+    mirror:
+      enabled: true
+      progress: true
+      tool_events: true
+      assistant_updates: true
+      throttle_ms: 3000
     # Webhook mode needs a public callback URL instead:
     # connectionMode: "webhook"
     # bind_host: "127.0.0.1"

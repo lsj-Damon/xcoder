@@ -15,6 +15,12 @@ import {
   CHANNEL_PERMISSION_REQUEST_METHOD,
   type ChannelPermissionRequestParams,
 } from '../../src/services/mcp/channelNotification.js'
+import {
+  CHANNEL_MIRROR_STATUS_CAPABILITY,
+  CHANNEL_MIRROR_STATUS_METHOD,
+  ChannelMirrorStatusNotificationSchema,
+  type ChannelMirrorStatusParams,
+} from '../../src/services/mcp/channelMirror.js'
 import { PERMISSION_REPLY_RE } from '../../src/services/mcp/channelPermissions.js'
 
 type FeishuConnectionMode = 'webhook' | 'websocket'
@@ -66,6 +72,11 @@ type FeishuServerConfig = {
   connectionMode: FeishuConnectionMode
   domain: FeishuDomain
   dmPolicy: string
+  mirrorEnabled: boolean
+  mirrorProgress: boolean
+  mirrorToolEvents: boolean
+  mirrorAssistantUpdates: boolean
+  mirrorThrottleMs: number
 }
 
 const TOOL_NAME = 'send_message'
@@ -97,6 +108,8 @@ const pendingApprovalByTarget = new Map<
     target: FeishuTarget
   }
 >()
+let pendingMirrorMessages: ChannelMirrorStatusParams[] = []
+let mirrorFlushTimer: ReturnType<typeof setTimeout> | null = null
 
 function getConfig(): FeishuServerConfig {
   const bindPort = parseInt(process.env.XCODER_FEISHU_BIND_PORT || '39876', 10)
@@ -124,6 +137,15 @@ function getConfig(): FeishuServerConfig {
     connectionMode,
     domain,
     dmPolicy: process.env.XCODER_FEISHU_DM_POLICY || 'pairing',
+    mirrorEnabled: (process.env.XCODER_FEISHU_MIRROR_ENABLED || '0') === '1',
+    mirrorProgress: (process.env.XCODER_FEISHU_MIRROR_PROGRESS || '1') !== '0',
+    mirrorToolEvents:
+      (process.env.XCODER_FEISHU_MIRROR_TOOL_EVENTS || '1') !== '0',
+    mirrorAssistantUpdates:
+      (process.env.XCODER_FEISHU_MIRROR_ASSISTANT_UPDATES || '1') !== '0',
+    mirrorThrottleMs:
+      parseInt(process.env.XCODER_FEISHU_MIRROR_THROTTLE_MS || '3000', 10) ||
+      3000,
   }
 }
 
@@ -268,6 +290,95 @@ function resolveApprovalFromText(
   return {
     requestId: pending.requestId,
     behavior: /^y(es)?$/i.test(bareMatch[1] || '') ? 'allow' : 'deny',
+  }
+}
+
+function shouldMirrorMessage(
+  config: FeishuServerConfig,
+  params: ChannelMirrorStatusParams,
+): boolean {
+  if (!config.mirrorEnabled) {
+    return false
+  }
+
+  if (params.category === 'progress' && !config.mirrorProgress) {
+    return false
+  }
+
+  if (params.category === 'tool' && !config.mirrorToolEvents) {
+    return false
+  }
+
+  if (params.category === 'assistant' && !config.mirrorAssistantUpdates) {
+    return false
+  }
+
+  return true
+}
+
+async function flushMirrorMessages(
+  client: Lark.Client,
+  config: FeishuServerConfig,
+): Promise<void> {
+  mirrorFlushTimer = null
+  if (pendingMirrorMessages.length === 0) {
+    return
+  }
+
+  const target = getDefaultTarget(config)
+  if (!target) {
+    return
+  }
+
+  const batch = pendingMirrorMessages
+  pendingMirrorMessages = []
+  const text = batch.map(item => `• ${item.text}`).join('\n')
+  await sendFeishuTextMessage(client, target, text)
+}
+
+function queueMirrorMessage(
+  client: Lark.Client,
+  config: FeishuServerConfig,
+  params: ChannelMirrorStatusParams,
+): void {
+  if (!shouldMirrorMessage(config, params)) {
+    return
+  }
+
+  const last = pendingMirrorMessages.at(-1)
+  if (
+    last &&
+    last.dedupeKey &&
+    params.dedupeKey &&
+    last.dedupeKey === params.dedupeKey &&
+    last.text === params.text
+  ) {
+    return
+  }
+
+  pendingMirrorMessages.push(params)
+
+  if (params.urgent) {
+    if (mirrorFlushTimer) {
+      clearTimeout(mirrorFlushTimer)
+      mirrorFlushTimer = null
+    }
+    void flushMirrorMessages(client, config).catch(error => {
+      logInfo(
+        `Failed to flush urgent mirror message: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
+    return
+  }
+
+  if (!mirrorFlushTimer) {
+    mirrorFlushTimer = setTimeout(() => {
+      void flushMirrorMessages(client, config).catch(error => {
+        logInfo(
+          `Failed to flush mirror messages: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
+    }, config.mirrorThrottleMs)
   }
 }
 
@@ -502,6 +613,7 @@ async function start(): Promise<void> {
         experimental: {
           'claude/channel': {},
           'claude/channel/permission': {},
+          [CHANNEL_MIRROR_STATUS_CAPABILITY]: {},
         },
       },
       instructions:
@@ -584,6 +696,13 @@ async function start(): Promise<void> {
           `Failed to forward permission request ${notification.params.request_id}: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
+    },
+  )
+
+  server.setNotificationHandler(
+    ChannelMirrorStatusNotificationSchema,
+    async notification => {
+      queueMirrorMessage(client, config, notification.params)
     },
   )
 

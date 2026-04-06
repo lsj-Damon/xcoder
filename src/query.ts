@@ -178,6 +178,30 @@ function isWithheldMaxOutputTokens(
   return msg?.type === 'assistant' && msg.apiError === 'max_output_tokens'
 }
 
+function extractAssistantMirrorText(message: AssistantMessage): string | null {
+  const hasToolUse = message.message.content.some(block => block.type === 'tool_use')
+  if (hasToolUse) {
+    return null
+  }
+
+  const text = message.message.content
+    .filter(
+      (
+        block,
+      ): block is Extract<(typeof message.message.content)[number], { type: 'text' }> =>
+        block.type === 'text',
+    )
+    .map(block => block.text.trim())
+    .filter(Boolean)
+    .join('\n')
+
+  if (!text) {
+    return null
+  }
+
+  return text.length > 240 ? `${text.slice(0, 240)}…` : text
+}
+
 export type QueryParams = {
   messages: Message[]
   systemPrompt: SystemPrompt
@@ -824,6 +848,15 @@ async function* queryLoop(
               yield yieldMessage
             }
             if (message.type === 'assistant') {
+              const mirrorText = extractAssistantMirrorText(message)
+              if (mirrorText) {
+                toolUseContext
+                  .getAppState()
+                  .channelMirrorCallbacks?.notifyStatus({
+                    category: 'assistant',
+                    text: mirrorText,
+                  })
+              }
               assistantMessages.push(message)
 
               const msgToolUseBlocks = message.message.content.filter(

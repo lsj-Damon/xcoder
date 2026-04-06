@@ -42,6 +42,19 @@ const FeishuApprovalSchema = z
   })
   .passthrough()
 
+const FeishuMirrorSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    progress: z.boolean().optional(),
+    tool_events: z.boolean().optional(),
+    toolEvents: z.boolean().optional(),
+    assistant_updates: z.boolean().optional(),
+    assistantUpdates: z.boolean().optional(),
+    throttle_ms: z.number().int().positive().optional(),
+    throttleMs: z.number().int().positive().optional(),
+  })
+  .passthrough()
+
 const FeishuAccountSchema = z
   .object({
     app_id: z.string().optional(),
@@ -109,6 +122,7 @@ const FeishuChannelConfigSchema = z
     allow_from: z.array(z.string()).optional(),
     allowFrom: z.array(z.string()).optional(),
     approval: FeishuApprovalSchema.optional(),
+    mirror: FeishuMirrorSchema.optional(),
   })
   .passthrough()
 
@@ -178,6 +192,11 @@ export type NormalizedFeishuChannelConfig = {
   env: Record<string, string>
   allowFrom: string[]
   approvalEnabled: boolean
+  mirrorEnabled: boolean
+  mirrorProgress: boolean
+  mirrorToolEvents: boolean
+  mirrorAssistantUpdates: boolean
+  mirrorThrottleMs: number
 }
 
 let cachedConfigPath: string | null = null
@@ -496,6 +515,18 @@ export function getConfiguredFeishuChannelConfig():
   const domain = feishu.domain || 'feishu'
   const dmPolicy = feishu.dmPolicy || feishu.dm_policy || 'pairing'
   const primaryAccount = getPrimaryFeishuAccount(feishu)
+  const mirrorEnabled = feishu.mirror?.enabled === true
+  const mirrorProgress = feishu.mirror?.progress !== false
+  const mirrorToolEvents =
+    feishu.mirror?.tool_events !== false &&
+    feishu.mirror?.toolEvents !== false
+  const mirrorAssistantUpdates =
+    feishu.mirror?.assistant_updates !== false &&
+    feishu.mirror?.assistantUpdates !== false
+  const mirrorThrottleMs =
+    feishu.mirror?.throttle_ms ||
+    feishu.mirror?.throttleMs ||
+    3000
   const env: Record<string, string> = {
     ...(feishu.env || {}),
     XCODER_CONFIG_PATH: getXcoderConfigPath(),
@@ -509,6 +540,13 @@ export function getConfiguredFeishuChannelConfig():
     ),
     XCODER_FEISHU_APPROVAL_ENABLED:
       feishu.approval?.enabled === false ? '0' : '1',
+    XCODER_FEISHU_MIRROR_ENABLED: mirrorEnabled ? '1' : '0',
+    XCODER_FEISHU_MIRROR_PROGRESS: mirrorProgress ? '1' : '0',
+    XCODER_FEISHU_MIRROR_TOOL_EVENTS: mirrorToolEvents ? '1' : '0',
+    XCODER_FEISHU_MIRROR_ASSISTANT_UPDATES: mirrorAssistantUpdates
+      ? '1'
+      : '0',
+    XCODER_FEISHU_MIRROR_THROTTLE_MS: String(mirrorThrottleMs),
   }
 
   const appId = resolveConfiguredString(
@@ -591,6 +629,11 @@ export function getConfiguredFeishuChannelConfig():
     env,
     allowFrom: feishu.allow_from || feishu.allowFrom || [],
     approvalEnabled: feishu.approval?.enabled !== false,
+    mirrorEnabled,
+    mirrorProgress,
+    mirrorToolEvents,
+    mirrorAssistantUpdates,
+    mirrorThrottleMs,
   }
 }
 

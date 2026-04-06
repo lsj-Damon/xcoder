@@ -165,6 +165,12 @@ channels:
     allow_from: []
     approval:
       enabled: true
+    mirror:
+      enabled: true
+      progress: true
+      tool_events: true
+      assistant_updates: true
+      throttle_ms: 3000
 ```
 
 Use `domain: "lark"` for the international Lark endpoint instead of mainland Feishu.
@@ -186,6 +192,21 @@ In webhook mode, the local server listens on:
 `http://127.0.0.1:39876/feishu/events`
 
 Expose that path through your own tunnel or reverse proxy and use the public URL in Feishu's event subscription settings. In websocket mode, `public_base_url` is not needed.
+
+To mirror important process updates back to Feishu while the session runs, enable:
+
+```yaml
+channels:
+  feishu:
+    mirror:
+      enabled: true
+      progress: true
+      tool_events: true
+      assistant_updates: true
+      throttle_ms: 3000
+```
+
+This mirrors key milestones such as "message received", tool start/finish/failure, permission results, progress summaries, and plain assistant text replies. It is designed for locked-screen use where the machine stays awake and online.
 
 ### Local Source Tree
 
