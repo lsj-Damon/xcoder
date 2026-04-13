@@ -45,6 +45,7 @@ const FeishuApprovalSchema = z
 const FeishuMirrorSchema = z
   .object({
     enabled: z.boolean().optional(),
+    errors: z.boolean().optional(),
     progress: z.boolean().optional(),
     tool_events: z.boolean().optional(),
     toolEvents: z.boolean().optional(),
@@ -141,11 +142,26 @@ const XcoderPermissionsSchema = z
   })
   .passthrough()
 
+const XcoderRoutingSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    cheap_model: z.string().optional(),
+    cheapModel: z.string().optional(),
+    max_prompt_chars: z.number().int().positive().optional(),
+    maxPromptChars: z.number().int().positive().optional(),
+    max_messages: z.number().int().positive().optional(),
+    maxMessages: z.number().int().positive().optional(),
+    allowed_query_sources: z.array(z.string()).optional(),
+    allowedQuerySources: z.array(z.string()).optional(),
+  })
+  .passthrough()
+
 const XcoderConfigSchema = z
   .object({
     xcoder: z
       .object({
         model: z.string().optional(),
+        routing: XcoderRoutingSchema.optional(),
       })
       .optional(),
     providers: z.record(z.string(), ProviderConfigSchema).optional(),
@@ -195,11 +211,20 @@ export type NormalizedFeishuChannelConfig = {
   allowFrom: string[]
   approvalEnabled: boolean
   mirrorEnabled: boolean
+  mirrorErrors: boolean
   mirrorProgress: boolean
   mirrorToolEvents: boolean
   mirrorAssistantUpdates: boolean
   mirrorThrottleMs: number
   mirrorProgressThrottleMs: number
+}
+
+export type NormalizedXcoderTurnRoutingConfig = {
+  enabled: boolean
+  cheapModel: string
+  maxPromptChars: number
+  maxMessages: number
+  allowedQuerySources: string[]
 }
 
 let cachedConfigPath: string | null = null
@@ -501,6 +526,32 @@ export function getConfiguredAutoYesMode(): XcoderAutoYesMode | null {
   )
 }
 
+export function getConfiguredTurnRouting():
+  | NormalizedXcoderTurnRoutingConfig
+  | null {
+  const config = getXcoderConfig()
+  const routing = config?.xcoder?.routing
+  const cheapModel = routing?.cheap_model || routing?.cheapModel
+
+  if (!routing || routing.enabled === false || !cheapModel?.trim()) {
+    return null
+  }
+
+  return {
+    enabled: true,
+    cheapModel: cheapModel.trim(),
+    maxPromptChars:
+      routing.max_prompt_chars || routing.maxPromptChars || 1200,
+    maxMessages: routing.max_messages || routing.maxMessages || 8,
+    allowedQuerySources: [
+      ...(routing.allowed_query_sources || routing.allowedQuerySources || [
+        'repl_main_thread',
+        'sdk',
+      ]),
+    ],
+  }
+}
+
 export function getConfiguredFeishuChannelConfig():
   | NormalizedFeishuChannelConfig
   | null {
@@ -519,6 +570,7 @@ export function getConfiguredFeishuChannelConfig():
   const dmPolicy = feishu.dmPolicy || feishu.dm_policy || 'pairing'
   const primaryAccount = getPrimaryFeishuAccount(feishu)
   const mirrorEnabled = feishu.mirror?.enabled === true
+  const mirrorErrors = feishu.mirror?.errors !== false
   const mirrorProgress = feishu.mirror?.progress !== false
   const mirrorToolEvents =
     feishu.mirror?.tool_events !== false &&
@@ -548,6 +600,7 @@ export function getConfiguredFeishuChannelConfig():
     XCODER_FEISHU_APPROVAL_ENABLED:
       feishu.approval?.enabled === false ? '0' : '1',
     XCODER_FEISHU_MIRROR_ENABLED: mirrorEnabled ? '1' : '0',
+    XCODER_FEISHU_MIRROR_ERRORS: mirrorErrors ? '1' : '0',
     XCODER_FEISHU_MIRROR_PROGRESS: mirrorProgress ? '1' : '0',
     XCODER_FEISHU_MIRROR_TOOL_EVENTS: mirrorToolEvents ? '1' : '0',
     XCODER_FEISHU_MIRROR_ASSISTANT_UPDATES: mirrorAssistantUpdates
@@ -640,6 +693,7 @@ export function getConfiguredFeishuChannelConfig():
     allowFrom: feishu.allow_from || feishu.allowFrom || [],
     approvalEnabled: feishu.approval?.enabled !== false,
     mirrorEnabled,
+    mirrorErrors,
     mirrorProgress,
     mirrorToolEvents,
     mirrorAssistantUpdates,

@@ -1,12 +1,6 @@
 import { feature } from 'bun:bundle'
 import { z } from 'zod/v4'
 import { clearInvokedSkillsForAgent } from '../../bootstrap/state.js'
-import {
-  ALL_AGENT_DISALLOWED_TOOLS,
-  ASYNC_AGENT_ALLOWED_TOOLS,
-  CUSTOM_AGENT_DISALLOWED_TOOLS,
-  IN_PROCESS_TEAMMATE_ALLOWED_TOOLS,
-} from '../../constants/tools.js'
 import { startAgentSummarization } from '../../services/AgentSummary/agentSummary.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -37,7 +31,6 @@ import {
 } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { asAgentId } from '../../types/ids.js'
 import type { Message as MessageType } from '../../types/message.js'
-import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isInProtectedNamespace } from '../../utils/envUtils.js'
 import { AbortError, errorMessage } from '../../utils/errors.js'
@@ -54,10 +47,12 @@ import {
   classifyYoloAction,
 } from '../../utils/permissions/yoloClassifier.js'
 import { emitTaskProgress as emitTaskProgressEvent } from '../../utils/task/sdkProgress.js'
-import { isInProcessTeammate } from '../../utils/teammateContext.js'
 import { getTokenCountFromUsage } from '../../utils/tokens.js'
-import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../ExitPlanModeTool/constants.js'
 import { AGENT_TOOL_NAME, LEGACY_AGENT_TOOL_NAME } from './constants.js'
+import {
+  buildAgentExecutionPolicy,
+  isToolAllowedByAgentPolicy,
+} from './agentPolicy.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 export type ResolvedAgentTools = {
   hasWildcard: boolean
@@ -78,41 +73,12 @@ export function filterToolsForAgent({
   isAsync?: boolean
   permissionMode?: PermissionMode
 }): Tools {
-  return tools.filter(tool => {
-    // Allow MCP tools for all agents
-    if (tool.name.startsWith('mcp__')) {
-      return true
-    }
-    // Allow ExitPlanMode for agents in plan mode (e.g., in-process teammates)
-    // This bypasses both the ALL_AGENT_DISALLOWED_TOOLS and async tool filters
-    if (
-      toolMatchesName(tool, EXIT_PLAN_MODE_V2_TOOL_NAME) &&
-      permissionMode === 'plan'
-    ) {
-      return true
-    }
-    if (ALL_AGENT_DISALLOWED_TOOLS.has(tool.name)) {
-      return false
-    }
-    if (!isBuiltIn && CUSTOM_AGENT_DISALLOWED_TOOLS.has(tool.name)) {
-      return false
-    }
-    if (isAsync && !ASYNC_AGENT_ALLOWED_TOOLS.has(tool.name)) {
-      if (isAgentSwarmsEnabled() && isInProcessTeammate()) {
-        // Allow AgentTool for in-process teammates to spawn sync subagents.
-        // Validation in AgentTool.call() prevents background agents and teammate spawning.
-        if (toolMatchesName(tool, AGENT_TOOL_NAME)) {
-          return true
-        }
-        // Allow task tools for in-process teammates to coordinate via shared task list
-        if (IN_PROCESS_TEAMMATE_ALLOWED_TOOLS.has(tool.name)) {
-          return true
-        }
-      }
-      return false
-    }
-    return true
+  const policy = buildAgentExecutionPolicy({
+    isBuiltIn,
+    isAsync,
+    permissionMode,
   })
+  return tools.filter(tool => isToolAllowedByAgentPolicy(tool, policy))
 }
 
 /**

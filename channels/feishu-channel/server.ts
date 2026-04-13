@@ -73,6 +73,7 @@ type FeishuServerConfig = {
   domain: FeishuDomain
   dmPolicy: string
   mirrorEnabled: boolean
+  mirrorErrors: boolean
   mirrorProgress: boolean
   mirrorToolEvents: boolean
   mirrorAssistantUpdates: boolean
@@ -140,6 +141,7 @@ function getConfig(): FeishuServerConfig {
     domain,
     dmPolicy: process.env.XCODER_FEISHU_DM_POLICY || 'pairing',
     mirrorEnabled: (process.env.XCODER_FEISHU_MIRROR_ENABLED || '0') === '1',
+    mirrorErrors: (process.env.XCODER_FEISHU_MIRROR_ERRORS || '1') !== '0',
     mirrorProgress: (process.env.XCODER_FEISHU_MIRROR_PROGRESS || '1') !== '0',
     mirrorToolEvents:
       (process.env.XCODER_FEISHU_MIRROR_TOOL_EVENTS || '1') !== '0',
@@ -309,6 +311,10 @@ function shouldMirrorMessage(
   }
 
   if (params.category === 'progress' && !config.mirrorProgress) {
+    return false
+  }
+
+  if (params.category === 'error' && !config.mirrorErrors) {
     return false
   }
 

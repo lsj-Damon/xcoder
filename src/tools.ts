@@ -83,7 +83,12 @@ import { TaskCreateTool } from './tools/TaskCreateTool/TaskCreateTool.js'
 import { TaskGetTool } from './tools/TaskGetTool/TaskGetTool.js'
 import { TaskUpdateTool } from './tools/TaskUpdateTool/TaskUpdateTool.js'
 import { TaskListTool } from './tools/TaskListTool/TaskListTool.js'
-import uniqBy from 'lodash-es/uniqBy.js'
+import {
+  createToolRegistryEntries,
+  materializeToolsFromRegistry,
+  sortAndDedupeToolRegistryEntries,
+  type ToolRegistryEntry,
+} from './services/tools/registry.js'
 import { isToolSearchEnabledOptimistic } from './utils/toolSearch.js'
 import { isTodoV2Enabled } from './utils/tasks.js'
 // Dead code elimination: conditional import for CLAUDE_CODE_VERIFY_PLAN
@@ -185,13 +190,13 @@ export function getToolsForDefaultPreset(): string[] {
 /**
  * Get the complete exhaustive list of all tools that could be available
  * in the current environment (respecting process.env flags).
- * This is the source of truth for ALL tools.
+ * This is the source of truth for ALL built-in tool registrations.
  */
 /**
  * NOTE: This MUST stay in sync with https://console.statsig.com/4aF3Ewatb6xPVpCwxb5nA3/dynamic_configs/claude_code_global_system_caching, in order to cache the system prompt across users.
  */
-export function getAllBaseTools(): Tools {
-  return [
+function getAllBaseToolRegistryEntries(): ToolRegistryEntry[] {
+  return createToolRegistryEntries([
     AgentTool,
     TaskOutputTool,
     BashTool,
@@ -247,7 +252,11 @@ export function getAllBaseTools(): Tools {
     // Include ToolSearchTool when tool search might be enabled (optimistic check)
     // The actual decision to defer tools happens at request time in claude.ts
     ...(isToolSearchEnabledOptimistic() ? [ToolSearchTool] : []),
-  ]
+  ])
+}
+
+export function getAllBaseTools(): Tools {
+  return materializeToolsFromRegistry(getAllBaseToolRegistryEntries())
 }
 
 /**
@@ -359,10 +368,10 @@ export function assembleToolPool(
   // preserves insertion order, so built-ins win on name conflict.
   // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
   // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
-  const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)
-  return uniqBy(
-    [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
-    'name',
+  return materializeToolsFromRegistry(
+    sortAndDedupeToolRegistryEntries(
+      createToolRegistryEntries([...builtInTools, ...allowedMcpTools]),
+    ),
   )
 }
 

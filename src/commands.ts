@@ -158,6 +158,12 @@ import {
   clearSkillCaches,
   getDynamicSkills,
 } from './skills/loadSkillsDir.js'
+import {
+  createSkillRegistryEntries,
+  isSkillVisibleToSkillTool,
+  isSkillVisibleToSlashCommands,
+  materializeSkillCommandsFromRegistry,
+} from './services/skills/registry.js'
 import { getBundledSkills } from './skills/bundledSkills.js'
 import { getBuiltinPluginSkillCommands } from './plugins/builtinPlugins.js'
 import {
@@ -563,19 +569,8 @@ export function getMcpSkillCommands(
 export const getSkillToolCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
     const allCommands = await getCommands(cwd)
-    return allCommands.filter(
-      cmd =>
-        cmd.type === 'prompt' &&
-        !cmd.disableModelInvocation &&
-        cmd.source !== 'builtin' &&
-        // Always include skills from /skills/ dirs, bundled skills, and legacy /commands/ entries
-        // (they all get an auto-derived description from the first line if frontmatter is missing).
-        // Plugin/MCP commands still require an explicit description to appear in the listing.
-        (cmd.loadedFrom === 'bundled' ||
-          cmd.loadedFrom === 'skills' ||
-          cmd.loadedFrom === 'commands_DEPRECATED' ||
-          cmd.hasUserSpecifiedDescription ||
-          cmd.whenToUse),
+    return materializeSkillCommandsFromRegistry(
+      createSkillRegistryEntries(allCommands).filter(isSkillVisibleToSkillTool),
     )
   },
 )
@@ -587,15 +582,10 @@ export const getSlashCommandToolSkills = memoize(
   async (cwd: string): Promise<Command[]> => {
     try {
       const allCommands = await getCommands(cwd)
-      return allCommands.filter(
-        cmd =>
-          cmd.type === 'prompt' &&
-          cmd.source !== 'builtin' &&
-          (cmd.hasUserSpecifiedDescription || cmd.whenToUse) &&
-          (cmd.loadedFrom === 'skills' ||
-            cmd.loadedFrom === 'plugin' ||
-            cmd.loadedFrom === 'bundled' ||
-            cmd.disableModelInvocation),
+      return materializeSkillCommandsFromRegistry(
+        createSkillRegistryEntries(allCommands).filter(
+          isSkillVisibleToSlashCommands,
+        ),
       )
     } catch (error) {
       logError(toError(error))

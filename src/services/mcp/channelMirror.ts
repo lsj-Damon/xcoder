@@ -12,7 +12,7 @@ export const ChannelMirrorStatusNotificationSchema = z.object({
     dedupeKey: z.string().optional(),
     urgent: z.boolean().optional(),
     category: z
-      .enum(['status', 'tool', 'progress', 'assistant', 'permission'])
+      .enum(['status', 'tool', 'progress', 'assistant', 'permission', 'error'])
       .optional(),
   }),
 })
@@ -25,8 +25,77 @@ export type ChannelMirrorCallbacks = {
   notifyStatus(params: ChannelMirrorStatusParams): void
 }
 
+type TerminalErrorMirrorSource = 'query' | 'remote-task'
+
+type TerminalErrorMirrorInput = {
+  source: TerminalErrorMirrorSource
+  summary: string
+  details?: string
+  scopeId?: string
+  subject?: string
+}
+
+const MAX_ERROR_SUBJECT_LENGTH = 80
+const MAX_ERROR_SUMMARY_LENGTH = 120
+const MAX_ERROR_DETAILS_LENGTH = 280
+
 function formatCountLabel(count: number, noun: string): string {
   return `${count} ${noun}`
+}
+
+function normalizeMirrorText(text: string | undefined): string {
+  return text?.replace(/\s+/g, ' ').trim() || ''
+}
+
+function truncateMirrorText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text
+  }
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`
+}
+
+function buildMirrorDedupeSegment(value: string | undefined): string {
+  const normalized = normalizeMirrorText(value)
+  if (!normalized) {
+    return 'none'
+  }
+  return encodeURIComponent(normalized.toLowerCase()).slice(0, 96)
+}
+
+export function buildTerminalErrorMirrorStatus(
+  input: TerminalErrorMirrorInput,
+): ChannelMirrorStatusParams {
+  const sourceLabel = input.source === 'query' ? '主查询' : '远程任务'
+  const summary = truncateMirrorText(
+    normalizeMirrorText(input.summary),
+    MAX_ERROR_SUMMARY_LENGTH,
+  )
+  const subject = truncateMirrorText(
+    normalizeMirrorText(input.subject),
+    MAX_ERROR_SUBJECT_LENGTH,
+  )
+  const details = truncateMirrorText(
+    normalizeMirrorText(input.details),
+    MAX_ERROR_DETAILS_LENGTH,
+  )
+
+  const lines = ['任务中断', `来源：${sourceLabel}`]
+  if (subject) {
+    lines.push(`任务：${subject}`)
+  }
+  lines.push(`原因：${summary}`)
+  if (details && details !== summary) {
+    lines.push(`详情：${details}`)
+  }
+
+  return {
+    category: 'error',
+    text: lines.join('\n'),
+    urgent: true,
+    dedupeKey: `error:${input.source}:${buildMirrorDedupeSegment(input.scopeId)}:${buildMirrorDedupeSegment(
+      [subject, summary, details].filter(Boolean).join('|'),
+    )}`,
+  }
 }
 
 export function buildMirrorStatusFromToolProgress(

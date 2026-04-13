@@ -378,6 +378,9 @@ src/
   tasks/                # Background task management
 ```
 
+Architecture guide:
+`docs/architecture/platform-layers.md`
+
 ---
 
 ## Tech stack

@@ -104,6 +104,7 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../analytics/index.js'
+import { createToolRegistryEntry } from '../tools/registry.js'
 import {
   type ElicitationWaitingState,
   runElicitationHooks,
@@ -1768,7 +1769,7 @@ export const fetchToolsForClient = memoizeWithLRU(
       return toolsToProcess
         .map((tool): Tool => {
           const fullyQualifiedName = buildMcpToolName(client.name, tool.name)
-          return {
+          return createToolRegistryEntry({
             ...MCPTool,
             // In skip-prefix mode, use the original name for model invocation so MCP tools
             // can override builtins by name. mcpInfo is used for permission checking.
@@ -1987,7 +1988,7 @@ export const fetchToolsForClient = memoizeWithLRU(
             isComputerUseMCPServer!(client.name)
               ? computerUseWrapper!().getComputerUseMCPToolOverrides(tool.name)
               : {}),
-          }
+          }).tool
         })
         .filter(isIncludedMcpTool)
     } catch (error) {

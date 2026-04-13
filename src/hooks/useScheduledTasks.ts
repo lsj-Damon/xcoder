@@ -2,13 +2,16 @@ import { useEffect, useRef } from 'react'
 import { useAppStateStore, useSetAppState } from '../state/AppState.js'
 import { isTerminalTaskStatus } from '../Task.js'
 import {
+  createAutomationService,
+  type AutomationDelivery,
+} from '../services/automation/service.js'
+import {
   findTeammateTaskByAgentId,
   injectUserMessageToTeammate,
 } from '../tasks/InProcessTeammateTask/InProcessTeammateTask.js'
 import { isKairosCronEnabled } from '../tools/ScheduleCronTool/prompt.js'
 import type { Message } from '../types/message.js'
 import { getCronJitterConfig } from '../utils/cronJitterConfig.js'
-import { createCronScheduler } from '../utils/cronScheduler.js'
 import { removeCronTasks } from '../utils/cronTasks.js'
 import { logForDebugging } from '../utils/debug.js'
 import { enqueuePendingNotification } from '../utils/messageQueueManager.js'
@@ -81,37 +84,34 @@ export function useScheduledTasks({
         workload: WORKLOAD_CRON,
       })
 
-    const scheduler = createCronScheduler({
-      // Missed-task surfacing (onFire fallback). Teammate crons are always
-      // session-only (durable:false) so they never appear in the missed list,
-      // which is populated from disk at scheduler startup — this path only
-      // handles team-lead durable crons.
-      onFire: enqueueForLead,
-      // Normal fires receive the full CronTask so we can route by agentId.
-      onFireTask: task => {
-        if (task.agentId) {
+    const scheduler = createAutomationService({
+      onLeadPrompt: enqueueForLead,
+      onDelivery: (delivery: AutomationDelivery) => {
+        if (delivery.kind === 'teammate') {
           const teammate = findTeammateTaskByAgentId(
-            task.agentId,
+            delivery.agentId,
             store.getState().tasks,
           )
           if (teammate && !isTerminalTaskStatus(teammate.status)) {
-            injectUserMessageToTeammate(teammate.id, task.prompt, setAppState)
+            injectUserMessageToTeammate(
+              teammate.id,
+              delivery.task.prompt,
+              setAppState,
+            )
             return
           }
-          // Teammate is gone — clean up the orphaned cron so it doesn't keep
-          // firing into nowhere every tick. One-shots would auto-delete on
-          // fire anyway, but recurring crons would loop until auto-expiry.
           logForDebugging(
-            `[ScheduledTasks] teammate ${task.agentId} gone, removing orphaned cron ${task.id}`,
+            `[ScheduledTasks] teammate ${delivery.agentId} gone, removing orphaned cron ${delivery.task.id}`,
           )
-          void removeCronTasks([task.id])
+          void removeCronTasks([delivery.task.id])
           return
         }
+
         const msg = createScheduledTaskFireMessage(
           `Running scheduled task (${formatCronFireTime(new Date())})`,
         )
         setMessages(prev => [...prev, msg])
-        enqueueForLead(task.prompt)
+        enqueueForLead(delivery.task.prompt)
       },
       isLoading: () => isLoadingRef.current,
       assistantMode,

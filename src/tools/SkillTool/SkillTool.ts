@@ -46,6 +46,12 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED,
   logEvent,
 } from '../../services/analytics/index.js'
+import {
+  createSkillRegistryEntries,
+  createSkillRegistryEntry,
+  isSkillVisibleToSkillTool,
+  materializeSkillCommandsFromRegistry,
+} from '../../services/skills/registry.js'
 import { getAgentContext } from '../../utils/agentContext.js'
 import { errorMessage } from '../../utils/errors.js'
 import {
@@ -88,9 +94,18 @@ async function getAllCommands(context: ToolUseContext): Promise<Command[]> {
     .mcp.commands.filter(
       cmd => cmd.type === 'prompt' && cmd.loadedFrom === 'mcp',
     )
-  if (mcpSkills.length === 0) return getCommands(getProjectRoot())
+  if (mcpSkills.length === 0) {
+    return materializeSkillCommandsFromRegistry(
+      createSkillRegistryEntries(await getCommands(getProjectRoot())).filter(
+        isSkillVisibleToSkillTool,
+      ),
+    )
+  }
   const localCommands = await getCommands(getProjectRoot())
-  return uniqBy([...localCommands, ...mcpSkills], 'name')
+  return materializeSkillCommandsFromRegistry(
+    createSkillRegistryEntries(uniqBy([...localCommands, ...mcpSkills], 'name'))
+      .filter(isSkillVisibleToSkillTool),
+  )
 }
 
 // Re-export Progress from centralized types to break import cycles
@@ -133,6 +148,7 @@ async function executeForkedSkill(
   const isBuiltIn = builtInCommandNames().has(commandName)
   const isOfficialSkill = isOfficialMarketplaceSkill(command)
   const isBundled = command.source === 'bundled'
+  const skillEntry = createSkillRegistryEntry(command)
   const forkedSanitizedName =
     isBuiltIn || isBundled || isOfficialSkill ? commandName : 'custom'
 
@@ -171,6 +187,8 @@ async function executeForkedSkill(
     ...(process.env.USER_TYPE === 'ant' && {
       skill_name:
         commandName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      skill_trust_level:
+        skillEntry.lifecycle.trustLevel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       skill_source:
         command.source as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       ...(command.loadedFrom && {
@@ -655,6 +673,10 @@ export const SkillTool: Tool<InputSchema, Output, Progress> = buildTool({
     const isBundled = command?.type === 'prompt' && command.source === 'bundled'
     const isOfficialSkill =
       command?.type === 'prompt' && isOfficialMarketplaceSkill(command)
+    const skillEntry =
+      command?.type === 'prompt'
+        ? createSkillRegistryEntry(command)
+        : undefined
     const sanitizedCommandName =
       isBuiltIn || isBundled || isOfficialSkill ? commandName : 'custom'
 
@@ -694,6 +716,11 @@ export const SkillTool: Tool<InputSchema, Output, Progress> = buildTool({
       ...(process.env.USER_TYPE === 'ant' && {
         skill_name:
           commandName as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+        ...(skillEntry && {
+          skill_trust_level:
+            skillEntry.lifecycle
+              .trustLevel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+        }),
         ...(command?.type === 'prompt' && {
           skill_source:
             command.source as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,

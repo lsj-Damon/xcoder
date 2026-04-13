@@ -63,6 +63,9 @@ type OpenAIChatRequest = {
       strict?: boolean
     }
   }
+  thinking?: {
+    type: 'enabled' | 'disabled'
+  }
 }
 
 type OpenAIChatResponse = {
@@ -418,6 +421,8 @@ export async function createOpenAIBetaMessage({
     ...(outputFormat && {
       response_format: convertOutputFormatToOpenAI(outputFormat),
     }),
+    // Disable reasoning/thinking mode for Kimi API compatibility
+    thinking: { type: 'disabled' },
   }
 
   const headers: Record<string, string> = {

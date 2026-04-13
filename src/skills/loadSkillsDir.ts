@@ -17,6 +17,14 @@ import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
 } from '../services/analytics/index.js'
+import {
+  canExecuteInlineShellForSkill,
+} from '../services/skills/lifecycle.js'
+import {
+  createSkillRegistryEntry,
+  materializeSkillCommandsFromRegistry,
+  type SkillRegistryEntry,
+} from '../services/skills/registry.js'
 import { roughTokenCountEstimation } from '../services/tokenEstimation.js'
 import type { Command, PromptCommand } from '../types/command.js'
 import {
@@ -126,7 +134,16 @@ async function getFileIdentity(filePath: string): Promise<string | null> {
 // Internal type to track skill with its file path for deduplication
 type SkillWithPath = {
   skill: Command
+  entry: SkillRegistryEntry
   filePath: string
+}
+
+function createSkillWithPath(skill: Command, filePath: string): SkillWithPath {
+  return {
+    skill,
+    entry: createSkillRegistryEntry(skill as Extract<Command, { type: 'prompt' }>),
+    filePath,
+  }
 }
 
 /**
@@ -371,7 +388,12 @@ export function createSkillCommand({
       // Security: MCP skills are remote and untrusted — never execute inline
       // shell commands (!`…` / ```! … ```) from their markdown body.
       // ${CLAUDE_SKILL_DIR} is meaningless for MCP skills anyway.
-      if (loadedFrom !== 'mcp') {
+      if (
+        canExecuteInlineShellForSkill({
+          loadedFrom,
+          source,
+        } as Pick<Command, 'loadedFrom' | 'source'>)
+      ) {
         finalContent = await executeShellCommandsInPrompt(
           finalContent,
           {
@@ -458,16 +480,18 @@ async function loadSkillsFromSkillsDir(
         const paths = parseSkillPaths(frontmatter)
 
         return {
-          skill: createSkillCommand({
-            ...parsed,
-            skillName,
-            markdownContent,
-            source,
-            baseDir: skillDirPath,
-            loadedFrom: 'skills',
-            paths,
-          }),
-          filePath: skillFilePath,
+          ...createSkillWithPath(
+            createSkillCommand({
+              ...parsed,
+              skillName,
+              markdownContent,
+              source,
+              baseDir: skillDirPath,
+              loadedFrom: 'skills',
+              paths,
+            }),
+            skillFilePath,
+          ),
         }
       } catch (error) {
         logError(error)
@@ -598,17 +622,19 @@ async function loadSkillsFromCommandsDir(
         )
 
         skills.push({
-          skill: createSkillCommand({
-            ...parsed,
-            skillName: cmdName,
-            displayName: undefined,
-            markdownContent: content,
-            source,
-            baseDir: skillDirectory,
-            loadedFrom: 'commands_DEPRECATED',
-            paths: undefined,
-          }),
-          filePath,
+          ...createSkillWithPath(
+            createSkillCommand({
+              ...parsed,
+              skillName: cmdName,
+              displayName: undefined,
+              markdownContent: content,
+              source,
+              baseDir: skillDirectory,
+              loadedFrom: 'commands_DEPRECATED',
+              paths: undefined,
+            }),
+            filePath,
+          ),
         })
       } catch (error) {
         logError(error)
@@ -737,7 +763,7 @@ export const getSkillDirCommands = memoize(
       string,
       SettingSource | 'builtin' | 'mcp' | 'plugin' | 'bundled'
     >()
-    const deduplicatedSkills: Command[] = []
+    const deduplicatedSkills: SkillWithPath[] = []
 
     for (let i = 0; i < allSkillsWithPaths.length; i++) {
       const entry = allSkillsWithPaths[i]
@@ -746,7 +772,7 @@ export const getSkillDirCommands = memoize(
 
       const fileId = fileIds[i]
       if (fileId === null || fileId === undefined) {
-        deduplicatedSkills.push(skill)
+        deduplicatedSkills.push(entry)
         continue
       }
 
@@ -759,7 +785,7 @@ export const getSkillDirCommands = memoize(
       }
 
       seenFileIds.set(fileId, skill.source)
-      deduplicatedSkills.push(skill)
+      deduplicatedSkills.push(entry)
     }
 
     const duplicatesRemoved =
@@ -769,24 +795,25 @@ export const getSkillDirCommands = memoize(
     }
 
     // Separate conditional skills (with paths frontmatter) from unconditional ones
-    const unconditionalSkills: Command[] = []
-    const newConditionalSkills: Command[] = []
-    for (const skill of deduplicatedSkills) {
+    const unconditionalSkills: SkillWithPath[] = []
+    const newConditionalSkills: SkillWithPath[] = []
+    for (const skillWithPath of deduplicatedSkills) {
+      const { skill } = skillWithPath
       if (
         skill.type === 'prompt' &&
         skill.paths &&
         skill.paths.length > 0 &&
         !activatedConditionalSkillNames.has(skill.name)
       ) {
-        newConditionalSkills.push(skill)
+        newConditionalSkills.push(skillWithPath)
       } else {
-        unconditionalSkills.push(skill)
+        unconditionalSkills.push(skillWithPath)
       }
     }
 
     // Store conditional skills for later activation when matching files are touched
     for (const skill of newConditionalSkills) {
-      conditionalSkills.set(skill.name, skill)
+      conditionalSkills.set(skill.skill.name, skill.entry)
     }
 
     if (newConditionalSkills.length > 0) {
@@ -799,7 +826,9 @@ export const getSkillDirCommands = memoize(
       `Loaded ${deduplicatedSkills.length} unique skills (${unconditionalSkills.length} unconditional, ${newConditionalSkills.length} conditional, managed: ${managedSkills.length}, user: ${userSkills.length}, project: ${projectSkillsNested.flat().length}, additional: ${additionalSkillsNested.flat().length}, legacy commands: ${legacyCommands.length})`,
     )
 
-    return unconditionalSkills
+    return materializeSkillCommandsFromRegistry(
+      unconditionalSkills.map(skill => skill.entry),
+    )
   },
 )
 
@@ -819,12 +848,12 @@ export { transformSkillFiles }
 
 // State for dynamically discovered skills
 const dynamicSkillDirs = new Set<string>()
-const dynamicSkills = new Map<string, Command>()
+const dynamicSkills = new Map<string, SkillRegistryEntry>()
 
 // --- Conditional skills (path-filtered) ---
 
 // Skills with paths frontmatter that haven't been activated yet
-const conditionalSkills = new Map<string, Command>()
+const conditionalSkills = new Map<string, SkillRegistryEntry>()
 // Names of skills that have been activated (survives cache clears within a session)
 const activatedConditionalSkillNames = new Set<string>()
 
@@ -943,9 +972,9 @@ export async function addSkillDirectories(dirs: string[]): Promise<void> {
 
   // Process in reverse order (shallower first) so deeper paths override
   for (let i = loadedSkills.length - 1; i >= 0; i--) {
-    for (const { skill } of loadedSkills[i] ?? []) {
+    for (const { skill, entry } of loadedSkills[i] ?? []) {
       if (skill.type === 'prompt') {
-        dynamicSkills.set(skill.name, skill)
+        dynamicSkills.set(skill.name, entry)
       }
     }
   }
@@ -979,7 +1008,7 @@ export async function addSkillDirectories(dirs: string[]): Promise<void> {
  * These are skills discovered from file paths during the session.
  */
 export function getDynamicSkills(): Command[] {
-  return Array.from(dynamicSkills.values())
+  return materializeSkillCommandsFromRegistry(Array.from(dynamicSkills.values()))
 }
 
 /**
@@ -1004,7 +1033,8 @@ export function activateConditionalSkillsForPaths(
 
   const activated: string[] = []
 
-  for (const [name, skill] of conditionalSkills) {
+  for (const [name, entry] of conditionalSkills) {
+    const skill = entry.command
     if (skill.type !== 'prompt' || !skill.paths || skill.paths.length === 0) {
       continue
     }
@@ -1028,7 +1058,7 @@ export function activateConditionalSkillsForPaths(
 
       if (skillIgnore.ignores(relativePath)) {
         // Activate this skill by moving it to dynamic skills
-        dynamicSkills.set(name, skill)
+        dynamicSkills.set(name, entry)
         conditionalSkills.delete(name)
         activatedConditionalSkillNames.add(name)
         activated.push(name)

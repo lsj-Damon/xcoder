@@ -1,5 +1,13 @@
 xcoder:
   model: "relay:claude-sonnet-4-6"
+  routing:
+    enabled: true
+    cheap_model: "relay:claude-haiku-4-5"
+    max_prompt_chars: 1200
+    max_messages: 8
+    allowed_query_sources:
+      - "repl_main_thread"
+      - "sdk"
 
 providers:
   relay:
@@ -39,6 +47,7 @@ channels:
       enabled: true
     mirror:
       enabled: true
+      errors: true
       progress: true
       tool_events: true
       assistant_updates: true

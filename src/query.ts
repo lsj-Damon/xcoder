@@ -81,6 +81,7 @@ import {
   getRuntimeMainLoopModel,
   renderModelName,
 } from './utils/model/model.js'
+import { selectTurnModelRoute } from './utils/model/routing.js'
 import {
   doesMostRecentAssistantMessageExceed200k,
   finalContextTokensFromLastResponse,
@@ -96,12 +97,12 @@ import { createDumpPromptsFetch } from './services/api/dumpPrompts.js'
 import { StreamingToolExecutor } from './services/tools/StreamingToolExecutor.js'
 import { queryCheckpoint } from './utils/queryProfiler.js'
 import { runTools } from './services/tools/toolOrchestration.js'
-import { applyToolResultBudget } from './utils/toolResultStorage.js'
-import { recordContentReplacement } from './utils/sessionStorage.js'
+import { runCompressionPipeline } from './services/compact/pipeline/index.js'
 import { handleStopHooks } from './query/stopHooks.js'
 import { buildQueryConfig } from './query/config.js'
 import { productionDeps, type QueryDeps } from './query/deps.js'
 import type { Terminal, Continue } from './query/transitions.js'
+import { buildTerminalErrorMirrorStatus } from './services/mcp/channelMirror.js'
 import { feature } from 'bun:bundle'
 import {
   getCurrentTurnTokenBudget,
@@ -389,107 +390,31 @@ async function* queryLoop(
     let messagesForQuery = [...getMessagesAfterCompactBoundary(messages)]
 
     let tracking = autoCompactTracking
-
-    // Enforce per-message budget on aggregate tool result size. Runs BEFORE
-    // microcompact — cached MC operates purely by tool_use_id (never inspects
-    // content), so content replacement is invisible to it and the two compose
-    // cleanly. No-ops when contentReplacementState is undefined (feature off).
-    // Persist only for querySources that read records back on resume: agentId
-    // routes to sidechain file (AgentTool resume) or session file (/resume).
-    // Ephemeral runForkedAgent callers (agent_summary etc.) don't persist.
-    const persistReplacements =
-      querySource.startsWith('agent:') ||
-      querySource.startsWith('repl_main_thread')
-    messagesForQuery = await applyToolResultBudget(
-      messagesForQuery,
-      toolUseContext.contentReplacementState,
-      persistReplacements
-        ? records =>
-            void recordContentReplacement(
-              records,
-              toolUseContext.agentId,
-            ).catch(logError)
-        : undefined,
-      new Set(
-        toolUseContext.options.tools
-          .filter(t => !Number.isFinite(t.maxResultSizeChars))
-          .map(t => t.name),
-      ),
-    )
-
-    // Apply snip before microcompact (both may run — they are not mutually exclusive).
-    // snipTokensFreed is plumbed to autocompact so its threshold check reflects
-    // what snip removed; tokenCountWithEstimation alone can't see it (reads usage
-    // from the protected-tail assistant, which survives snip unchanged).
-    let snipTokensFreed = 0
-    if (feature('HISTORY_SNIP')) {
-      queryCheckpoint('query_snip_start')
-      const snipResult = snipModule!.snipCompactIfNeeded(messagesForQuery)
-      messagesForQuery = snipResult.messages
-      snipTokensFreed = snipResult.tokensFreed
-      if (snipResult.boundaryMessage) {
-        yield snipResult.boundaryMessage
-      }
-      queryCheckpoint('query_snip_end')
-    }
-
-    // Apply microcompact before autocompact
-    queryCheckpoint('query_microcompact_start')
-    const microcompactResult = await deps.microcompact(
-      messagesForQuery,
-      toolUseContext,
+    const {
+      messages: compressedMessages,
+      tracking: nextTracking,
+      compactionResult,
+      preCompactMessages,
+      pendingCacheEdits,
+      snipTokensFreed,
+    } = yield* runCompressionPipeline({
+      messages: messagesForQuery,
+      systemPrompt,
+      userContext,
+      systemContext,
       querySource,
-    )
-    messagesForQuery = microcompactResult.messages
-    // For cached microcompact (cache editing), defer boundary message until after
-    // the API response so we can use actual cache_deleted_input_tokens.
-    // Gated behind feature() so the string is eliminated from external builds.
-    const pendingCacheEdits = feature('CACHED_MICROCOMPACT')
-      ? microcompactResult.compactionInfo?.pendingCacheEdits
-      : undefined
-    queryCheckpoint('query_microcompact_end')
-
-    // Project the collapsed context view and maybe commit more collapses.
-    // Runs BEFORE autocompact so that if collapse gets us under the
-    // autocompact threshold, autocompact is a no-op and we keep granular
-    // context instead of a single summary.
-    //
-    // Nothing is yielded — the collapsed view is a read-time projection
-    // over the REPL's full history. Summary messages live in the collapse
-    // store, not the REPL array. This is what makes collapses persist
-    // across turns: projectView() replays the commit log on every entry.
-    // Within a turn, the view flows forward via state.messages at the
-    // continue site (query.ts:1192), and the next projectView() no-ops
-    // because the archived messages are already gone from its input.
-    if (feature('CONTEXT_COLLAPSE') && contextCollapse) {
-      const collapseResult = await contextCollapse.applyCollapsesIfNeeded(
-        messagesForQuery,
-        toolUseContext,
-        querySource,
-      )
-      messagesForQuery = collapseResult.messages
-    }
+      toolUseContext,
+      tracking,
+      deps,
+      snipModule,
+      contextCollapse,
+    })
+    messagesForQuery = compressedMessages
+    tracking = nextTracking
 
     const fullSystemPrompt = asSystemPrompt(
       appendSystemContext(systemPrompt, systemContext),
     )
-
-    queryCheckpoint('query_autocompact_start')
-    const { compactionResult, consecutiveFailures } = await deps.autocompact(
-      messagesForQuery,
-      toolUseContext,
-      {
-        systemPrompt,
-        userContext,
-        systemContext,
-        toolUseContext,
-        forkContextMessages: messagesForQuery,
-      },
-      querySource,
-      tracking,
-      snipTokensFreed,
-    )
-    queryCheckpoint('query_autocompact_end')
 
     if (compactionResult) {
       const {
@@ -531,7 +456,9 @@ async function* queryLoop(
       // loops); see #304930.
       if (params.taskBudget) {
         const preCompactContext =
-          finalContextTokensFromLastResponse(messagesForQuery)
+          finalContextTokensFromLastResponse(
+            preCompactMessages ?? messagesForQuery,
+          )
         taskBudgetRemaining = Math.max(
           0,
           (taskBudgetRemaining ?? params.taskBudget.total) - preCompactContext,
@@ -547,22 +474,6 @@ async function* queryLoop(
         turnId: deps.uuid(),
         turnCounter: 0,
         consecutiveFailures: 0,
-      }
-
-      const postCompactMessages = buildPostCompactMessages(compactionResult)
-
-      for (const message of postCompactMessages) {
-        yield message
-      }
-
-      // Continue on with the current query call using the post compact messages
-      messagesForQuery = postCompactMessages
-    } else if (consecutiveFailures !== undefined) {
-      // Autocompact failed — propagate failure count so the circuit breaker
-      // can stop retrying on the next iteration.
-      tracking = {
-        ...(tracking ?? { compacted: false, turnId: '', turnCounter: 0 }),
-        consecutiveFailures,
       }
     }
 
@@ -593,13 +504,41 @@ async function* queryLoop(
 
     const appState = toolUseContext.getAppState()
     const permissionMode = appState.toolPermissionContext.mode
-    let currentModel = getRuntimeMainLoopModel({
+    const baseTurnModel = getRuntimeMainLoopModel({
       permissionMode,
       mainLoopModel: toolUseContext.options.mainLoopModel,
       exceeds200kTokens:
         permissionMode === 'plan' &&
         doesMostRecentAssistantMessageExceed200k(messagesForQuery),
     })
+    const turnRoute = selectTurnModelRoute({
+      baseModel: baseTurnModel,
+      messages: messagesForQuery,
+      permissionMode,
+      querySource,
+      toolCount: toolUseContext.options.tools.length,
+    })
+    let currentModel = turnRoute.selectedModel
+
+    logEvent('tengu_turn_model_route_selected', {
+      querySource:
+        querySource as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      fromModel:
+        baseTurnModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      toModel:
+        currentModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      strategy:
+        turnRoute.strategy as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      reason:
+        turnRoute.reason as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      signature:
+        turnRoute.signature as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+    })
+    if (turnRoute.strategy === 'cheap') {
+      logForDebugging(
+        `[routing] using cheap route ${baseTurnModel} -> ${currentModel} (${turnRoute.signature})`,
+      )
+    }
 
     queryCheckpoint('query_setup_end')
 
@@ -989,6 +928,16 @@ async function* queryLoop(
       logError(error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
+      toolUseContext
+        .getAppState()
+        .channelMirrorCallbacks?.notifyStatus(
+          buildTerminalErrorMirrorStatus({
+            source: 'query',
+            scopeId: queryTracking.chainId || 'main',
+            summary: '模型或运行时错误导致当前任务停止',
+            details: errorMessage,
+          }),
+        )
       logEvent('tengu_query_error', {
         assistantMessages: assistantMessages.length,
         toolUses: assistantMessages.flatMap(_ =>

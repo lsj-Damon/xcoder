@@ -19,6 +19,7 @@ import { fetchSession } from '../../utils/teleport/api.js';
 import { archiveRemoteSession, pollRemoteSessionEvents } from '../../utils/teleport.js';
 import type { TodoList } from '../../utils/todo/types.js';
 import type { UltraplanPhase } from '../../utils/ultraplan/ccrSession.js';
+import { buildTerminalErrorMirrorStatus } from '../../services/mcp/channelMirror.js';
 export type RemoteAgentTaskState = TaskStateBase & {
   type: 'remote_agent';
   remoteTaskType: RemoteTaskType;
@@ -357,6 +358,16 @@ Remote review did not produce output (${reason}). Tell the user to retry /ultrar
     value: message,
     mode: 'task-notification'
   });
+}
+
+function mirrorRemoteTaskTerminalError(context: TaskContext, taskId: string, title: string, reason: string): void {
+  context.getAppState().channelMirrorCallbacks?.notifyStatus(buildTerminalErrorMirrorStatus({
+    source: 'remote-task',
+    scopeId: taskId,
+    subject: title,
+    summary: '远程任务失败，当前任务已停止',
+    details: reason
+  }));
 }
 
 /**
@@ -747,10 +758,15 @@ function startRemoteSessionPolling(taskId: string, context: TaskContext): () => 
             status: 'failed'
           }));
           const reason = result && result.subtype !== 'success' ? 'remote session returned an error' : reviewTimedOut && !sessionDone ? 'remote session exceeded 30 minutes' : 'no review output — orchestrator may have exited early';
+          mirrorRemoteTaskTerminalError(context, taskId, task.title, reason);
           enqueueRemoteReviewFailureNotification(taskId, reason, context.setAppState);
           void evictTaskOutput(taskId);
           void removeRemoteAgentMetadata(taskId);
           return; // Stop polling
+        }
+        if (finalStatus === 'failed') {
+          const reason = result && result.subtype !== 'success' ? `remote session ended with ${result.subtype}` : 'remote task failed';
+          mirrorRemoteTaskTerminalError(context, taskId, task.title, reason);
         }
         enqueueRemoteNotification(taskId, task.title, finalStatus, context.setAppState, task.toolUseId);
         void evictTaskOutput(taskId);
@@ -773,6 +789,7 @@ function startRemoteSessionPolling(taskId: string, context: TaskContext): () => 
             status: 'failed',
             endTime: Date.now()
           }));
+          mirrorRemoteTaskTerminalError(context, taskId, task.title, 'remote session exceeded 30 minutes');
           enqueueRemoteReviewFailureNotification(taskId, 'remote session exceeded 30 minutes', context.setAppState);
           void evictTaskOutput(taskId);
           void removeRemoteAgentMetadata(taskId);
